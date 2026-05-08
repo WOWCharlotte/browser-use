@@ -12,8 +12,6 @@ from browser_use.llm.messages import BaseMessage
 from browser_use.llm.views import ChatInvokeCompletion
 
 T = TypeVar('T', bound=BaseModel)
-
-
 @runtime_checkable
 class BaseChatModel(Protocol):
 	_verified_api_keys: bool = False

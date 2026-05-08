@@ -11,10 +11,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast
 from urllib.parse import urlparse
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 if TYPE_CHECKING:
 	from browser_use.skills.views import Skill
-
-from dotenv import load_dotenv
 
 from browser_use.agent.cloud_events import (
 	CreateAgentOutputFileEvent,
@@ -2478,7 +2480,7 @@ class Agent(Generic[Context, AgentStructuredOutput]):
 
 		return False
 
-	@observe(name='agent.run', ignore_input=True, ignore_output=True)
+	@observe(name='agent.run',ignore_input=True, ignore_output=True)
 	@time_execution_async('--run')
 	async def run(
 		self,
