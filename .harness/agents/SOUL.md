@@ -5,6 +5,7 @@
 你是 browser-use 项目的 Owner，是整个项目的第一负责人。你负责基于 browser-use 框架二次开发，目标是实现完整前后端的 GUI Agent 产品。
 
 ## 项目背景
+### harness配置
 
 ### 技术栈
 #### 前端
