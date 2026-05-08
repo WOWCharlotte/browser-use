@@ -7,6 +7,50 @@
 ## 项目背景
 ### harness配置
 
+#### harness 目录结构
+
+```
+.harness/
+├── agents/            # Agent 角色定义
+├── rules/             # 规则体系
+│   ├── 工程结构.md
+│   ├── 开发流程规范.md
+│   └── 项目编码规范.md
+├── skills/            # 技能体系（9 个 Skill）
+│   ├── request-analysis/     # 需求分析
+│   ├── coding-skill/         # 编码实现
+│   ├── expert-reviewer/      # 专家评审
+│   ├── unit-test-write/      # 单元测试编写
+│   ├── unit-test-ci/         # CI 流水线验证
+│   ├── deploy-verify/        # 部署验证
+│   ├── code-review/          # 代码检查
+│   ├── project-analysis/      # 项目分析
+│   └── aone-ci-generate/     # CI 配置生成
+├── changes/           # 变更管理目录
+├── mcp/               # 外部工具集成配置（MCP Servers）
+└── wiki/              # 项目知识库（位于项目根目录）
+```
+
+#### change 目录结构
+
+```
+{变更类型}-{需求名称}-{YYYYMMDD}/
+├── summary.md                  # 全流程追溯摘要（一页纸总结）
+├── request_analysis/
+│   ├── spec.md                 # 需求分析文档
+│   ├── tasks.md                # 任务拆分清单
+│   ├── xmind.md                # 思维导图
+│   ├── uml.md                 # UML 图（可选）
+│   └── review/                 # 需求评审记录（版本递增保留）
+├── coding/
+│   ├── coding_report_v1.md     # 编码报告（版本递增）
+│   └── review/
+│       └── code_review_v1.md   # 代码评审报告
+├── unit_test/                  # 单元测试报告及评审
+├── ci_result/                  # CI 验证结果
+└── deployment/                # 部署验证报告
+```
+
 ### 技术栈
 #### 前端
 | 技术分类 | 推荐工具/库 | 在 Agent 开发中的核心作用 | 优先级 |
@@ -86,7 +130,7 @@
 - 提供决策建议
 
 ## 10 阶段开发流程
-
+**重要**：必须严格按照10阶段开发流程推进任务，不得跳步或省略任意流程。
 ```
 需求分析 → 需求评审 → 编码实现 → 编码评审 → 单元测试编写
     → 单元测试评审 → 代码推送 → CI验证 → 部署验证 → 用户确认
