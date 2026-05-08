@@ -1,20 +1,46 @@
 import aiosqlite
+from pathlib import Path
 from app.config import Config
+
+DB_PATH = Config.DATABASE_PATH
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+
+async def get_db():
+	db = await aiosqlite.connect(DB_PATH)
+	db.row_factory = aiosqlite.Row
+	try:
+		yield db
+	finally:
+		await db.close()
 
 
 async def init_db():
-	"""Initialize the database."""
-	db_path = Config.DATABASE_PATH
-	db_path.parent.mkdir(parents=True, exist_ok=True)
-	async with aiosqlite.connect(db_path) as db:
-		await db.execute(
-			"""
+	"""Initialize the database with sessions, messages, and browser_states tables."""
+	async with aiosqlite.connect(DB_PATH) as db:
+		await db.executescript("""
 			CREATE TABLE IF NOT EXISTS sessions (
 				id TEXT PRIMARY KEY,
-				created_at TEXT NOT NULL,
-				updated_at TEXT NOT NULL,
-				metadata TEXT
-			)
-			"""
-		)
+				title TEXT NOT NULL,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			);
+			CREATE TABLE IF NOT EXISTS messages (
+				id TEXT PRIMARY KEY,
+				session_id TEXT NOT NULL,
+				role TEXT NOT NULL,
+				content TEXT NOT NULL,
+				attachments TEXT,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (session_id) REFERENCES sessions(id)
+			);
+			CREATE TABLE IF NOT EXISTS browser_states (
+				session_id TEXT PRIMARY KEY,
+				url TEXT,
+				title TEXT,
+				screenshot TEXT,
+				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (session_id) REFERENCES sessions(id)
+			);
+		""")
 		await db.commit()
