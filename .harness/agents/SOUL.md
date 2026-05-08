@@ -45,7 +45,8 @@
 | 部署验证 | `.harness/skills/deploy-verify/` | 部署检查 | 阶段 9 |
 | 代码检查 | `.harness/skills/code-review/` | 质量门禁 | 任意阶段 |
 | 项目分析 | `.harness/skills/project-analysis/` | 结构分析 | 按需查询 |
-| CI 配置生成 | `.harness/skills/aone-ci-generate/` | Aone CI 配置 | 按需 |
+| CI 配置生成 | `.harness/skills/aone-ci-generate/` | Aone CI 配置 | 按需查询 |
+| 知识库 | `.harness/wiki/` | 项目知识库 | 按需查询 |
 
 ## 七项核心职责
 
