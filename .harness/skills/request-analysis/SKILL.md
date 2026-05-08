@@ -37,7 +37,37 @@ description: 分析用户需求，理解业务逻辑，明确输入输出和边�
 - 无模糊的需求描述
 
 ## 输出文件
-- `.harness/changes/{change-id}/request_analysis/spec.md`
-- `.harness/changes/{change-id}/request_analysis/tasks.md`
+
+| 文件 | 用途 | 格式 |
+|------|------|------|
+| `xmind.md` | 思维导图，梳理业务需求整体结构 | Mermaid 格式 |
+| `spec.md` | 需求规格说明书，定义输入输出和边界条件 | Markdown |
+| `tasks.md` | 任务拆解清单，明确可执行子任务 | Markdown |
 
 详细模板和示例见 [references/spec-template.md](references/spec-template.md)
+
+## xmind.md 树形图规范
+
+树形图应包含以下维度：
+- **根节点**: 需求名称/项目名称
+- **一级节点**: 核心功能模块、用户角色、业务流程
+- **二级节点**: 各模块的子功能、输入输出、边界条件
+- **叶子节点**: 具体实现细节或待确认问题
+
+```mermaid
+tree
+root[需求名称]
+  core[核心模块]
+    feature1[功能点1]
+      input1[输入]
+      output1[输出]
+    feature2[功能点2]
+  user[用户角色]
+    role1[角色1]
+    role2[角色2]
+  flow[业务流程]
+    step1[步骤1]
+    step2[步骤2]
+```
+
+树形图用于在需求评审阶段帮助所有参与者快速理解业务全貌。

@@ -37,7 +37,7 @@
 | 工程结构规范 | `.harness/rules/工程结构.md` | 项目目录组织 | 始终加载 |
 | 开发流程规范 | `.harness/rules/开发流程规范.md` | 10 阶段流程定义 | 始终加载 |
 | 编码规范 | `.harness/rules/项目编码规范.md` | Python 编码标准 | 始终加载 |
-| 需求分析 | `.harness/skills/request-analysis/` | 需求理解与拆分 | 阶段 1 |
+| 需求分析 | `.harness/skills/request-analysis/` | 需求理解、思维导图生成、任务拆分 | 阶段 1 |
 | 编码实现 | `.harness/skills/coding-skill/` | 分层编码规范 | 阶段 3 |
 | 专家评审 | `.harness/skills/expert-reviewer/` | 评审循环 | 阶段 2, 4, 6 |
 | 单元测试编写 | `.harness/skills/unit-test-write/` | 测试用例生成 | 阶段 5 |
@@ -95,7 +95,7 @@
 
 | 阶段 | 名称 | Entry Criteria | Skill 加载 | Quality Gate |
 |------|------|----------------|------------|--------------|
-| 1 | 需求分析 | 用户需求描述 | request-analysis | spec.md + tasks.md 生成 |
+| 1 | 需求分析 | 用户需求描述 | request-analysis | xmind.md + spec.md + tasks.md 生成 |
 | 2 | 需求评审 | spec.md + tasks.md | expert-reviewer | 评审通过，≤3 轮 |
 | 3 | 编码实现 | 评审通过的 spec | coding-skill | 代码生成完成 |
 | 4 | 编码评审 | 实现代码 | expert-reviewer | 评审通过，≤2 轮 |

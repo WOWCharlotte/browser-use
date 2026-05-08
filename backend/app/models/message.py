@@ -13,7 +13,7 @@ class Attachment(BaseModel):
 class Message(BaseModel):
 	id: str = Field(default_factory=uuid7str)
 	session_id: str
-	role: Literal["user", "ai"]
+	role: str
 	content: str
 	attachments: list[Attachment] = []
 	created_at: datetime = Field(default_factory=datetime.now)
