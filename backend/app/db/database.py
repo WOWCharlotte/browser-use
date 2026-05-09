@@ -8,7 +8,7 @@ DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 async def get_db() -> aiosqlite.Connection:
 	"""Return a database connection as an async context manager."""
-	conn = await aiosqlite.connect(DB_PATH)
+	conn = await aiosqlite.connect(DB_PATH, check_same_thread=False)
 	conn.row_factory = aiosqlite.Row
 	return conn
 
