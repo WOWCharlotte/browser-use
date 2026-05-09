@@ -15,30 +15,31 @@ async def get_db() -> aiosqlite.Connection:
 
 async def init_db():
 	"""Initialize the database with sessions, messages, and browser_states tables."""
-	async with await get_db() as db:
-		await db.executescript("""
-			CREATE TABLE IF NOT EXISTS sessions (
-				id TEXT PRIMARY KEY,
-				title TEXT NOT NULL,
-				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-			);
-			CREATE TABLE IF NOT EXISTS messages (
-				id TEXT PRIMARY KEY,
-				session_id TEXT NOT NULL,
-				role TEXT NOT NULL,
-				content TEXT NOT NULL,
-				attachments TEXT,
-				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-				FOREIGN KEY (session_id) REFERENCES sessions(id)
-			);
-			CREATE TABLE IF NOT EXISTS browser_states (
-				session_id TEXT PRIMARY KEY,
-				url TEXT,
-				title TEXT,
-				screenshot TEXT,
-				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-				FOREIGN KEY (session_id) REFERENCES sessions(id)
-			);
-		""")
-		await db.commit()
+	conn = await get_db()
+	await conn.executescript("""
+		CREATE TABLE IF NOT EXISTS sessions (
+			id TEXT PRIMARY KEY,
+			title TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE IF NOT EXISTS messages (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			role TEXT NOT NULL,
+			content TEXT NOT NULL,
+			attachments TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (session_id) REFERENCES sessions(id)
+		);
+		CREATE TABLE IF NOT EXISTS browser_states (
+			session_id TEXT PRIMARY KEY,
+			url TEXT,
+			title TEXT,
+			screenshot TEXT,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (session_id) REFERENCES sessions(id)
+		);
+	""")
+	await conn.commit()
+	await conn.close()
