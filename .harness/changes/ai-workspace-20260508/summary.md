@@ -145,7 +145,7 @@ async def get_db() -> aiosqlite.Connection:
 
 ```bash
 # 后端启动
-cd backend && uv run python -m uvicorn app.main:app --reload --port 8000
+cd backend && uv run python -m uvicorn app.main:app --reload --port 8888
 
 # 前端启动
 cd frontend && pnpm dev

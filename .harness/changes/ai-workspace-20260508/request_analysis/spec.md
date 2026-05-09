@@ -38,7 +38,7 @@ AI Workspace GUI Agent
                             │ HTTP/SSE
                     ┌───────▼───────┐
                     │   FastAPI     │ ← 后端 API 网关
-                    │   (端口 8000)  │
+                    │   (端口 8888)  │
                     └───────┬───────┘
                             │
               ┌─────────────┼─────────────┐
@@ -366,7 +366,7 @@ type SSEEvent =
 ## 8. 第一阶段交付目标 (MVP)
 
 ### 后端
-- [ ] FastAPI 启动 (uvicorn, 端口 8000)
+- [ ] FastAPI 启动 (uvicorn, 端口 8888)
 - [ ] `/api/chat` SSE 端点 (调用 Agent)
 - [ ] `/api/sessions` CRUD
 - [ ] SQLite 会话持久化
