@@ -6,18 +6,16 @@ DB_PATH = Config.DATABASE_PATH
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
-async def get_db():
-	db = await aiosqlite.connect(DB_PATH)
-	db.row_factory = aiosqlite.Row
-	try:
-		yield db
-	finally:
-		await db.close()
+async def get_db() -> aiosqlite.Connection:
+	"""Return a database connection as an async context manager."""
+	conn = await aiosqlite.connect(DB_PATH)
+	conn.row_factory = aiosqlite.Row
+	return conn
 
 
 async def init_db():
 	"""Initialize the database with sessions, messages, and browser_states tables."""
-	async with aiosqlite.connect(DB_PATH) as db:
+	async with await get_db() as db:
 		await db.executescript("""
 			CREATE TABLE IF NOT EXISTS sessions (
 				id TEXT PRIMARY KEY,
