@@ -1,29 +1,39 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Sidebar } from "@/components/sidebar/Sidebar";
 import { ChatWindow } from "@/components/chat/ChatWindow";
 import { BrowserPreview } from "@/components/browser/BrowserPreview";
-import { BrowserState, AgentStatus } from "@/types";
-import { streamChat, pauseAgent, resumeAgent, stopAgent, getAgentStatus, createSession } from "@/lib/api";
+import { BrowserState, AgentStatus, Session } from "@/types";
+import { fetchSessions, createSession } from "@/lib/api";
 
 export default function Home() {
   const [currentSessionId, setCurrentSessionId] = useState<string>("");
   const [browserState, setBrowserState] = useState<BrowserState>({ url: "", title: "" });
   const [agentStatus, setAgentStatus] = useState<AgentStatus>("stopped");
-  const [isInitialized, setIsInitialized] = useState(false);
+  const initRef = useRef(false);
 
   useEffect(() => {
-    if (!currentSessionId && !isInitialized) {
-      createSession().then((session) => {
-        setCurrentSessionId(session.id);
-        setIsInitialized(true);
-      }).catch((err) => {
-        console.error("Failed to create session:", err);
-        setIsInitialized(true);
-      });
+    if (!initRef.current) {
+      initRef.current = true;
+      fetchSessions()
+        .then((sessions: Session[]) => {
+          if (sessions.length > 0) {
+            // Use most recent session
+            setCurrentSessionId(sessions[0].id);
+          } else {
+            // No sessions, create one
+            createSession().then((session) => {
+              setCurrentSessionId(session.id);
+            });
+          }
+        })
+        .catch((err) => {
+          console.error("Failed to load sessions:", err);
+        });
     }
-  }, [currentSessionId, isInitialized]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleEvent = (event: any) => {
     switch (event.type) {
@@ -45,7 +55,7 @@ export default function Home() {
   return (
     <div className="grid grid-cols-[240px_440px_1fr] h-screen">
       <Sidebar
-        currentSessionId={currentSessionId}
+        currentSessionId={currentSessionId || null}
         onSessionChange={setCurrentSessionId}
       />
       <div className="h-full border-r border-gray-200">

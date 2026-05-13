@@ -27,11 +27,22 @@ export function Sidebar({ currentSessionId, onSessionChange }: Props) {
 	};
 
 	const handleDelete = async (sessionId: string) => {
-		await deleteSession(sessionId);
-		setSessions((prev) => prev.filter((s) => s.id !== sessionId));
-		if (currentSessionId === sessionId && sessions.length > 1) {
-			onSessionChange(sessions.find((s) => s.id !== sessionId)?.id || "");
+		try {
+			await deleteSession(sessionId);
+			setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+			if (currentSessionId === sessionId && sessions.length > 1) {
+				const remaining = sessions.filter((s) => s.id !== sessionId);
+				onSessionChange(remaining[0]?.id || "");
+			}
+		} catch (e) {
+			console.error("Failed to delete session:", e);
 		}
+	};
+
+	const handleTitleChange = (sessionId: string, newTitle: string) => {
+		setSessions((prev) =>
+			prev.map((s) => (s.id === sessionId ? { ...s, title: newTitle } : s))
+		);
 	};
 
 	return (
@@ -62,6 +73,7 @@ export function Sidebar({ currentSessionId, onSessionChange }: Props) {
 						isActive={session.id === currentSessionId}
 						onClick={() => onSessionChange(session.id)}
 						onDelete={() => handleDelete(session.id)}
+						onTitleChange={handleTitleChange}
 					/>
 				))}
 			</div>

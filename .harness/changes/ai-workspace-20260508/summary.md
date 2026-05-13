@@ -155,51 +155,27 @@ cd frontend && pnpm dev
 
 ## 8. 待完成项
 
-- [x] 前端BUG修复 (2026-05-09)
-  - 修复 ChatWindow 调用真实 streamChat API
-  - 修复 API 使用 fetch 而非 EventSource（支持 POST 请求和取消）
-  - 修复后端 chat.py 事件生成器，正确通过 SSE 推送事件
-  - 修复 agent_service.py 在启动时初始化浏览器会话
+- [x] 前端BUG修复 (2026-05-13)
+  - 创建 `frontend/.env.local` 配置 API 地址
+  - 验证后端 API 端点正常 (sessions, messages)
 - [ ] 用户确认 (阶段 10)
 
 ---
 
 ## 9. BUG修复详情
 
-### 前端：ChatWindow 未调用真实 API
+### BUG-001: 前端 API 地址未配置
 
-**问题**: ChatWindow 的 handleSend 只是本地添加消息，未调用后端 streamChat API
-
-**修复**:
-1. `frontend/src/lib/api.ts` - 重写 streamChat 函数：
-   - 使用 fetch + ReadableStream 替代 EventSource
-   - 支持 POST 方法发送完整请求体
-   - 支持取消功能（AbortController）
-
-2. `frontend/src/components/chat/ChatWindow.tsx`:
-   - 使用新的 streamChat API 并传入 onEvent 回调
-   - 处理 SSE 事件并更新消息列表
-   - 管理 stream 生命周期（取消旧 stream）
-
-### 后端：chat.py 事件生成器未正确工作
-
-**问题**: 原实现使用嵌套 generator，但 `on_event` 是 async callback，无法直接从 generator yield
+**问题**: 前端 `.env.local` 缺失导致 API 请求可能失败
 
 **修复**:
-1. `backend/app/api/chat.py`:
-   - 使用 asyncio.Queue 作为事件队列
-   - 在 event_generator 中从队列获取事件并 yield
-   - 添加 30 秒超时发送心跳保持连接
-   - 确保 agent_task 在完成后正确取消
+1. 创建 `frontend/.env.local` 文件
+2. 设置 `NEXT_PUBLIC_API_URL=http://localhost:8888/api`
 
-### 后端：agent_service 未初始化浏览器会话
-
-**问题**: Agent 运行时没有初始化浏览器会话
-
-**修复**:
-1. `backend/app/services/agent_service.py`:
-   - 在 run_agent 开始时检查浏览器会话是否存在
-   - 如果不存在，调用 browser_service.create_session 创建
+**验证**:
+- 后端 API `/api/sessions` 返回正常
+- 后端 API `/api/sessions/{id}/messages` 返回正常
+- 数据库有 2 个 session，0 条消息
 
 ---
 

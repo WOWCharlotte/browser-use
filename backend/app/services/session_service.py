@@ -7,24 +7,32 @@ from app.db.database import get_db
 from app.utils import uuid7str
 
 
+def _row_to_dict(row) -> dict:
+	"""Convert aiosqlite.Row to dict properly."""
+	# sqlite3.Row and aiosqlite.Row both support direct dict() conversion via keys()
+	return dict(zip(row.keys(), row))
+
+
 class SessionService:
 	async def list_sessions(self) -> list[Session]:
 		db = await get_db()
 		try:
-			rows = await db.execute_fetchall(
+			cursor = await db.execute(
 				"SELECT * FROM sessions ORDER BY updated_at DESC"
 			)
-			return [Session(**dict(row)) for row in rows]
+			rows = await cursor.fetchall()
+			return [Session(**_row_to_dict(row)) for row in rows]
 		finally:
 			await db.close()
 
 	async def get_session(self, session_id: str) -> Optional[Session]:
 		db = await get_db()
 		try:
-			row = await db.execute_fetchone(
+			cursor = await db.execute(
 				"SELECT * FROM sessions WHERE id = ?", (session_id,)
 			)
-			return Session(**dict(row)) if row else None
+			row = await cursor.fetchone()
+			return Session(**_row_to_dict(row)) if row else None
 		finally:
 			await db.close()
 
@@ -68,15 +76,16 @@ class SessionService:
 	async def get_messages(self, session_id: str) -> list[Message]:
 		db = await get_db()
 		try:
-			rows = await db.execute_fetchall(
+			cursor = await db.execute(
 				"SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC",
 				(session_id,)
 			)
-			return [Message(**dict(row)) for row in rows]
+			rows = await cursor.fetchall()
+			return [Message(**_row_to_dict(row)) for row in rows]
 		finally:
 			await db.close()
 
-	async def add_message(self, session_id: str, role: str, content: str, attachments: str = None) -> Message:
+	async def add_message(self, session_id: str, role: str, content: str, attachments: str = "[]") -> Message:
 		message = Message(
 			id=uuid7str(),
 			session_id=session_id,
