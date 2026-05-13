@@ -1,12 +1,43 @@
 import asyncio
-from typing import Callable, Any
-
-from browser_use import Agent
-from browser_use.agent.service import AgentHookFunc
-from browser_use.llm.openai.chat import ChatOpenAI
+import uuid
+from typing import Any, Callable
 
 from app.config import Config
 from app.services.browser_service import browser_service
+from browser_use import Agent
+from browser_use.llm.openai.chat import ChatOpenAI
+
+# ============================================================================
+# AG-UI 事件类型常量
+# ============================================================================
+
+# 生命周期事件
+EVENT_RUN_STARTED = "RUN_STARTED"
+EVENT_RUN_FINISHED = "RUN_FINISHED"
+EVENT_RUN_ERROR = "RUN_ERROR"
+
+# 消息事件
+EVENT_TEXT_MESSAGE_START = "TEXT_MESSAGE_START"
+EVENT_TEXT_MESSAGE_CONTENT = "TEXT_MESSAGE_CONTENT"
+EVENT_TEXT_MESSAGE_END = "TEXT_MESSAGE_END"
+
+# 工具调用事件
+EVENT_TOOL_CALL_START = "TOOL_CALL_START"
+EVENT_TOOL_CALL_ARGS = "TOOL_CALL_ARGS"
+EVENT_TOOL_CALL_RESULT = "TOOL_CALL_RESULT"
+EVENT_TOOL_CALL_END = "TOOL_CALL_END"
+
+# 步骤事件
+EVENT_STEP_STARTED = "STEP_STARTED"
+EVENT_STEP_FINISHED = "STEP_FINISHED"
+
+# 状态事件
+EVENT_STATE_SNAPSHOT = "STATE_SNAPSHOT"
+EVENT_STATE_DELTA = "STATE_DELTA"
+
+# HITL 中断事件
+EVENT_INTERRUPT = "INTERRUPT"
+EVENT_RESUME = "RESUME"
 
 
 class AgentService:
@@ -40,13 +71,13 @@ class AgentService:
 		self,
 		session_id: str,
 		message: str,
-		on_event: Callable[[dict[str, Any]], None],
+		on_event: Callable[[dict[str, Any]]],
 		max_steps: int = 100,
 	) -> None:
-		"""Run agent with event callbacks.
+		"""Run agent with AG-UI compatible event callbacks.
 
 		Runs the agent to completion (or until stopped/paused) and reports
-		events via the on_event callback.
+		events via the on_event callback using AG-UI event format.
 		"""
 		# Ensure browser session exists
 		if session_id not in browser_service._sessions:
@@ -56,63 +87,84 @@ class AgentService:
 		if not agent:
 			agent = await self.create_agent(session_id, message)
 		else:
-			agent.task = message
+			agent.task = agent.task+"\n"+message
 
 		step_count = 0
+		message_id = str(uuid.uuid4())
 
 		async def on_step_start(agent_instance: Agent) -> None:
-			"""Callback called before each step."""
-			nonlocal step_count
+			"""Callback called before each step - emit STEP_STARTED."""
+			nonlocal step_count, message_id
 			step_count = agent_instance.state.n_steps
+
+			# 发送 TEXT_MESSAGE_START
+			message_id = str(uuid.uuid4())
+			await on_event({
+				"type": EVENT_TEXT_MESSAGE_START,
+				"message_id": message_id,
+				"role": "assistant",
+			})
 
 			# Check if paused and wait for resume
 			if self._paused.get(session_id, False):
 				self._resume_events[session_id].clear()
 				await on_event({
-					"type": "paused",
+					"type": EVENT_INTERRUPT,
+					"interrupt_id": str(uuid.uuid4()),
 					"reason": "awaiting_user",
 					"step": step_count,
 				})
 				await self._resume_events[session_id].wait()
 				await on_event({
-					"type": "resumed",
+					"type": EVENT_RESUME,
 					"step": step_count,
 				})
 
 			await on_event({
-				"type": "step_start",
-				"step": step_count,
+				"type": EVENT_STEP_STARTED,
+				"step_number": step_count,
 			})
 
 		async def on_step_end(agent_instance: Agent) -> None:
-			"""Callback called after each step."""
-			nonlocal step_count
+			"""Callback called after each step - emit STEP_FINISHED and content events."""
+			nonlocal step_count, message_id
 			step_count = agent_instance.state.n_steps
 
-			# Report action results from history
+			# 发送文本内容
 			if agent_instance.history and agent_instance.history.history:
 				last_item = agent_instance.history.history[-1]
 				if last_item.result:
 					for result in last_item.result:
 						if result.error:
+							# 错误内容作为 TEXT_MESSAGE_CONTENT 发送
 							await on_event({
-								"type": "error",
-								"message": result.error,
-								"step": step_count,
+								"type": EVENT_TEXT_MESSAGE_CONTENT,
+								"content": f"Error: {result.error}",
 							})
 						elif result.extracted_content:
+							# 提取的内容作为 TEXT_MESSAGE_CONTENT 发送
 							await on_event({
-								"type": "message",
+								"type": EVENT_TEXT_MESSAGE_CONTENT,
 								"content": result.extracted_content,
-								"step": step_count,
 							})
 
-			# Report browser state after step
+			# 发送 TEXT_MESSAGE_END
+			await on_event({
+				"type": EVENT_TEXT_MESSAGE_END,
+				"message_id": message_id,
+			})
+
+			# 发送步骤结束
+			await on_event({
+				"type": EVENT_STEP_FINISHED,
+				"step_number": step_count,
+			})
+
+			# 发送状态快照 (包含 browser_state)
 			state = await browser_service.get_state(session_id)
 			await on_event({
-				"type": "browser_state",
-				"step": step_count,
-				**state,
+				"type": EVENT_STATE_SNAPSHOT,
+				"state": state,
 			})
 
 		try:
@@ -122,20 +174,28 @@ class AgentService:
 				on_step_end=on_step_end,
 			)
 
-			# Report final result
+			# 发送最终结果
 			if history:
 				final_result = history.final_result()
 				if final_result:
 					await on_event({
-						"type": "message",
+						"type": EVENT_TEXT_MESSAGE_START,
+						"message_id": str(uuid.uuid4()),
+						"role": "assistant",
+					})
+					await on_event({
+						"type": EVENT_TEXT_MESSAGE_CONTENT,
 						"content": str(final_result),
-						"role": "ai",
+					})
+					await on_event({
+						"type": EVENT_TEXT_MESSAGE_END,
+						"message_id": message_id,
 					})
 
 		except Exception as e:
 			await on_event({
-				"type": "error",
-				"message": str(e),
+				"type": EVENT_RUN_ERROR,
+				"error": str(e),
 				"step": step_count,
 			})
 		finally:
