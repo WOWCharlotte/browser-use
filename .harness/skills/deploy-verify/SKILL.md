@@ -35,3 +35,14 @@ description: 验证部署包和部署流程的正确性。触发场景：阶段9
 | 检查项 | 状态 | 详情 |
 |--------|------|------|
 ```
+
+## 质量门禁脚本
+
+阶段完成后，可使用脚本验证产出物：
+
+```bash
+python scripts/check_quality_gate.py <change-id>
+```
+
+**检查项**:
+- deployment/deploy_report_v*.md 存在

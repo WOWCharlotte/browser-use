@@ -32,3 +32,15 @@ description: 根据需求规格和设计文档实现高质量代码。触发场�
 ## 输出文件
 - 实现代码
 - `.harness/changes/{change-id}/coding/coding_report_v*.md`
+
+## 质量门禁脚本
+
+阶段完成后，可使用脚本验证产出物：
+
+```bash
+python scripts/check_quality_gate.py <change-id>
+```
+
+**检查项**:
+- coding_report_v*.md 存在
+- coding/review/code_review_v*.md 存在

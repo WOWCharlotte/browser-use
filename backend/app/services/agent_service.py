@@ -48,6 +48,10 @@ class AgentService:
 		Runs the agent to completion (or until stopped/paused) and reports
 		events via the on_event callback.
 		"""
+		# Ensure browser session exists
+		if session_id not in browser_service._sessions:
+			await browser_service.create_session(session_id)
+
 		agent = self._agents.get(session_id)
 		if not agent:
 			agent = await self.create_agent(session_id, message)

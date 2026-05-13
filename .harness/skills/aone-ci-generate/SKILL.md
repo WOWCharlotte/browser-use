@@ -54,4 +54,15 @@ deploy:
 ## 输出文件
 `.aone.yml` 或 `.gitlab-ci.yml`
 
+## 质量门禁脚本
+
+阶段完成后，可使用脚本验证产出物：
+
+```bash
+python scripts/check_quality_gate.py <output-dir>
+```
+
+**检查项**:
+- 目录下存在 .yaml 或 .yml CI 配置文件
+
 详细配置模板见 [references/ci-template.md](references/ci-template.md)

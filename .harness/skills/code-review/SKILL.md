@@ -36,3 +36,15 @@ description: 进行代码质量和规范的检查。触发场景：阶段7-代�
 - 输入验证完善
 
 详细检查清单见 [references/security-checklist.md](references/security-checklist.md)
+
+## 质量门禁脚本
+
+阶段完成后，可使用脚本验证产出物：
+
+```bash
+python scripts/check_quality_gate.py <change-id>
+```
+
+**检查项**:
+- coding/review/code_review_v*.md 存在
+- MUST FIX 问题已处理

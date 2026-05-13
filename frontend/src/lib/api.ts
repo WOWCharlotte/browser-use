@@ -63,14 +63,79 @@ export async function getMessages(sessionId: string): Promise<Message[]> {
 	return res.json();
 }
 
-// Note: EventSource does not support custom error handling.
-// The caller should listen for 'error' events on the returned EventSource.
-export function streamChat(req: ChatRequest): EventSource {
-	const params = new URLSearchParams({
-		session_id: req.session_id,
-		message: req.message,
-	});
-	return new EventSource(`${API_BASE}/chat?${params}`);
+export type SSEEventHandler = (event: SSEEvent) => void;
+
+export interface SSEEvent {
+	type: "message" | "browser_state" | "done" | "paused" | "error" | "step_start";
+	content?: string;
+	role?: "ai" | "user";
+	url?: string;
+	title?: string;
+	screenshot?: string;
+	reason?: string;
+	message?: string;
+	step?: number;
+}
+
+export function streamChat(
+	req: ChatRequest,
+	onEvent: SSEEventHandler
+): { cancel: () => void } {
+	let cancelled = false;
+
+	(async () => {
+		try {
+			const response = await fetch(`${API_BASE}/chat`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(req),
+			});
+
+			if (!response.ok) {
+				onEvent({ type: "error", message: `HTTP ${response.status}` });
+				return;
+			}
+
+			const reader = response.body?.getReader();
+			if (!reader) {
+				onEvent({ type: "error", message: "No response body" });
+				return;
+			}
+
+			const decoder = new TextDecoder();
+			let buffer = "";
+
+			while (!cancelled) {
+				const { done, value } = await reader.read();
+				if (done) break;
+
+				buffer += decoder.decode(value, { stream: true });
+				const lines = buffer.split("\n");
+				buffer = lines.pop() || "";
+
+				for (const line of lines) {
+					if (line.startsWith("data: ")) {
+						try {
+							const data = JSON.parse(line.slice(6));
+							onEvent(data);
+						} catch (e) {
+							// Ignore parse errors for incomplete JSON
+						}
+					}
+				}
+			}
+		} catch (e) {
+			if (!cancelled) {
+				onEvent({ type: "error", message: String(e) });
+			}
+		}
+	})();
+
+	return {
+		cancel: () => {
+			cancelled = true;
+		},
+	};
 }
 
 export async function controlBrowser(

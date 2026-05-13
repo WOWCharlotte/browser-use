@@ -38,3 +38,15 @@ tests/
 | 外部API | 数据库操作 |
 
 详细测试模板见 [references/test-patterns.md](references/test-patterns.md)
+
+## 质量门禁脚本
+
+阶段完成后，可使用脚本验证产出物：
+
+```bash
+python scripts/check_quality_gate.py <change-id>
+```
+
+**检查项**:
+- test_report_v*.md 存在
+- unit_test/review/test_review_v*.md 存在（如有评审）

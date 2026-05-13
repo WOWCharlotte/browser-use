@@ -8,17 +8,22 @@ import { BrowserState, AgentStatus } from "@/types";
 import { streamChat, pauseAgent, resumeAgent, stopAgent, getAgentStatus, createSession } from "@/lib/api";
 
 export default function Home() {
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [currentSessionId, setCurrentSessionId] = useState<string>("");
   const [browserState, setBrowserState] = useState<BrowserState>({ url: "", title: "" });
   const [agentStatus, setAgentStatus] = useState<AgentStatus>("stopped");
+  const [isInitialized, setIsInitialized] = useState(false);
 
   useEffect(() => {
-    if (!currentSessionId) {
+    if (!currentSessionId && !isInitialized) {
       createSession().then((session) => {
         setCurrentSessionId(session.id);
+        setIsInitialized(true);
+      }).catch((err) => {
+        console.error("Failed to create session:", err);
+        setIsInitialized(true);
       });
     }
-  }, []);
+  }, [currentSessionId, isInitialized]);
 
   const handleEvent = (event: any) => {
     switch (event.type) {
@@ -43,9 +48,15 @@ export default function Home() {
         currentSessionId={currentSessionId}
         onSessionChange={setCurrentSessionId}
       />
-      {currentSessionId && (
-        <ChatWindow sessionId={currentSessionId} onEvent={handleEvent} />
-      )}
+      <div className="h-full border-r border-gray-200">
+        {currentSessionId ? (
+          <ChatWindow sessionId={currentSessionId} onEvent={handleEvent} />
+        ) : (
+          <div className="flex-1 flex items-center justify-center text-gray-400 h-full">
+            Initializing session...
+          </div>
+        )}
+      </div>
       <BrowserPreview state={browserState} />
     </div>
   );

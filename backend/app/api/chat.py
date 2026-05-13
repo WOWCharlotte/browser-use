@@ -26,15 +26,32 @@ async def chat(req: ChatRequest) -> StreamingResponse:
 		pass  # Log error in production
 
 	async def event_generator() -> AsyncGenerator[str, None]:
+		event_queue: asyncio.Queue[dict] = asyncio.Queue()
+
 		async def on_event(event: dict) -> None:
-			data = json.dumps(event)
-			yield f"data: {data}\n\n"
+			await event_queue.put(event)
 
 		try:
-			async for _ in agent_service.run_agent(req.session_id, req.message, on_event):
-				# The async generator yields None but we handle events via callback
-				pass
+			# Start the agent task
+			agent_task = asyncio.create_task(
+				agent_service.run_agent(req.session_id, req.message, on_event)
+			)
+
+			# Yield events as they come in
+			while True:
+				try:
+					event = await asyncio.wait_for(event_queue.get(), timeout=30.0)
+					yield f"data: {json.dumps(event)}\n\n"
+					if event.get("type") in ("done", "error"):
+						break
+				except asyncio.TimeoutError:
+					# Send heartbeat to keep connection alive
+					yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
 		except Exception as e:
 			yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+		finally:
+			# Cancel agent task if still running
+			if not agent_task.done():
+				agent_task.cancel()
 
 	return StreamingResponse(event_generator(), media_type="text/event-stream")

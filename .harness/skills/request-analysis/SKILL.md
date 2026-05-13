@@ -195,3 +195,22 @@ root[需求名称]
 ```
 
 树形图用于在需求评审阶段帮助所有参与者快速理解业务全貌。
+
+## 质量门禁脚本
+
+阶段完成后，可使用脚本验证产出物：
+
+```bash
+python scripts/check_quality_gate.py <change-id>
+```
+
+**检查项**:
+- xmind.md 存在
+- spec.md 存在
+- tasks.md 存在
+- uml.md 存在（如适用）
+
+**示例**:
+```bash
+python scripts/check_quality_gate.py feat-ai-workspace-20260508
+```

@@ -49,3 +49,14 @@ uv run pyright --stats
 ## 改进建议
 1. [建议]
 ```
+
+## 质量门禁脚本
+
+阶段完成后，可使用脚本验证产出物：
+
+```bash
+python scripts/check_quality_gate.py <analysis-dir>
+```
+
+**检查项**:
+- 分析目录下存在 .md 文件

@@ -56,3 +56,16 @@ CI验证通过
 | tests=0 | 阶段5 | 补充测试用例 |
 | 编译错误 | 阶段3 | 修复代码 |
 | 类型错误 | 阶段3 | 修复类型提示 |
+
+## 质量门禁脚本
+
+阶段完成后，可使用脚本验证产出物：
+
+```bash
+python scripts/check_quality_gate.py <change-id>
+```
+
+**检查项**:
+- ci_result/ci_result_v*.md 存在
+- CI status = SUCCESS
+- total_tests > 0

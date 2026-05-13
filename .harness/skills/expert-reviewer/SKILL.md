@@ -94,3 +94,22 @@ description: 从架构、性能、安全角度进行深度评审。触发场景�
 - 评审轮次 ≤ 限制（需求3轮，编码/测试2轮）
 
 详细评审清单见 [references/review-checklist.md](references/review-checklist.md)
+
+## 质量门禁脚本
+
+阶段完成后，可使用脚本验证产出物：
+
+```bash
+python scripts/check_quality_gate.py <change-id> <stage>
+```
+
+**参数**:
+- `<stage>`: request | coding | unit_test
+
+**示例**:
+```bash
+# 验证需求评审产出
+python scripts/check_quality_gate.py feat-ai-workspace-20260508 request
+# 验证编码评审产出
+python scripts/check_quality_gate.py feat-ai-workspace-20260508 coding
+```
