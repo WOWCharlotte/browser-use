@@ -179,11 +179,11 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
         event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         agent_task = None
 
-        def on_event(event: dict[str, Any]) -> None:
+        async def on_event(event: dict[str, Any]) -> None:
             """事件回调 - 线程安全地加入队列"""
             event["run_id"] = run_id
             event["thread_id"] = session_id
-            event_queue.put_nowait(event)
+            await event_queue.put(event)
 
         try:
             # 创建 agent 任务

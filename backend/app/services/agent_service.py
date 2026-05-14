@@ -1,6 +1,6 @@
 import asyncio
 import uuid
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 from app.config import Config
 from app.services.browser_service import browser_service
@@ -71,7 +71,7 @@ class AgentService:
 		self,
 		session_id: str,
 		message: str,
-		on_event: Callable[[dict[str, Any]], None],
+		on_event: Callable[[dict[str, Any]], Awaitable[None]],
 		max_steps: int = 100,
 	) -> None:
 		"""Run agent with AG-UI compatible event callbacks.
@@ -139,12 +139,14 @@ class AgentService:
 							# 错误内容作为 TEXT_MESSAGE_CONTENT 发送
 							await on_event({
 								"type": EVENT_TEXT_MESSAGE_CONTENT,
+								"message_id": message_id,
 								"content": f"Error: {result.error}",
 							})
 						elif result.extracted_content:
 							# 提取的内容作为 TEXT_MESSAGE_CONTENT 发送
 							await on_event({
 								"type": EVENT_TEXT_MESSAGE_CONTENT,
+								"message_id": message_id,
 								"content": result.extracted_content,
 							})
 
@@ -178,18 +180,20 @@ class AgentService:
 			if history:
 				final_result = history.final_result()
 				if final_result:
+					final_message_id = str(uuid.uuid4())
 					await on_event({
 						"type": EVENT_TEXT_MESSAGE_START,
-						"message_id": str(uuid.uuid4()),
+						"message_id": final_message_id,
 						"role": "assistant",
 					})
 					await on_event({
 						"type": EVENT_TEXT_MESSAGE_CONTENT,
+						"message_id": final_message_id,
 						"content": str(final_result),
 					})
 					await on_event({
 						"type": EVENT_TEXT_MESSAGE_END,
-						"message_id": message_id,
+						"message_id": final_message_id,
 					})
 
 		except Exception as e:

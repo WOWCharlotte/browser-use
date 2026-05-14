@@ -15,7 +15,7 @@ class BrowserService:
 		from browser_use.browser.session import BrowserSession
 		session = BrowserSession(
 			headless=False,
-			extra_chromium_args=[f"--remote-debugging-port={Config.CDP_PORT}"]
+			args=[f"--remote-debugging-port={Config.CDP_PORT}"]
 		)
 		await session.start()
 		self._sessions[session_id] = {"browser": session, "page": None}
