@@ -184,11 +184,27 @@ class AgentService:
 				"step_number": step_count,
 			})
 
-			# 发送状态快照 (包含 browser_state)
-			state = await browser_service.get_state(session_id)
+			state = last_item.state
+			tabs_data = [tab.model_dump() for tab in state.tabs] if state.tabs else []
+			interacted_data = []
+			if state.interacted_element:
+				for el in state.interacted_element:
+					if el:
+						try:
+							interacted_data.append(el.to_dict())
+						except Exception:
+							interacted_data.append(None)
+					else:
+						interacted_data.append(None)
 			await on_event({
 				"type": EVENT_STATE_SNAPSHOT,
-				"state": state,
+				"state": {
+					"url": state.url,
+					"title": state.title,
+					"tabs": tabs_data,
+					"interacted_element": interacted_data,
+					"screenshot_path": state.screenshot_path,
+				},
 			})
 
 		try:
