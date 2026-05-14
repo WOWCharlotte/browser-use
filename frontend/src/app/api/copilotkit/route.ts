@@ -82,11 +82,31 @@ export const POST = async (req: NextRequest) => {
 	}
 };
 
-// 可选: 支持 GET 用于健康检查
-export const GET = async () => {
+// 处理 CopilotKit 客户端的 GET 请求
+export const GET = async (req: NextRequest) => {
+	const url = req.nextUrl.pathname;
+	console.log(`[copilotkit/route] GET ${url}`);
+
+	// 处理 CopilotKit 线程列表请求
+	if (url.endsWith("/threads")) {
+		return NextResponse.json({
+			threads: [],
+			cursor: null,
+		});
+	}
+
+	// 处理 CopilotKit 运行时信息请求
+	if (url.endsWith("/info")) {
+		return NextResponse.json({
+			agents: Object.keys(agents),
+		});
+	}
+
+	// 默认返回状态信息
 	return NextResponse.json({
 		status: "ok",
 		service: "copilotkit",
 		agentCount: Object.keys(agents).length,
+		agents: Object.keys(agents),
 	});
 };

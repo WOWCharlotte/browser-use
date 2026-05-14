@@ -71,7 +71,7 @@ class AgentService:
 		self,
 		session_id: str,
 		message: str,
-		on_event: Callable[[dict[str, Any]]],
+		on_event: Callable[[dict[str, Any]], None],
 		max_steps: int = 100,
 	) -> None:
 		"""Run agent with AG-UI compatible event callbacks.

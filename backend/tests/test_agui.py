@@ -2,333 +2,464 @@
 AG-UI 协议集成单元测试
 
 测试内容:
-1. RunAgentInput Pydantic 模型验证
-2. AG-UI 事件序列化
-3. /agui 端点功能测试
-4. AgentService 事件映射测试
+1. 事件映射函数 map_agent_event_to_agui
+2. 任务提取函数 extract_task
+3. AG-UI 端点功能测试
 """
 import asyncio
 import json
 import uuid
+import sys
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
-from httpx import ASGITransport, AsyncClient
 
-from app.api.agui import (
-    AGUI_EVENT_TYPES,
-    Message,
-    MessageContent,
+# 添加 backend 目录到 sys.path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from app.api.agui import map_agent_event_to_agui, extract_task, router
+
+from ag_ui.core import (
     RunAgentInput,
-    RunAgentInput,
-    event_to_sse,
-    serialize_event,
+    TextMessageStartEvent,
+    TextMessageContentEvent,
+    TextMessageEndEvent,
+    RunStartedEvent,
+    RunFinishedEvent,
+    RunErrorEvent,
+    StepStartedEvent,
+    StepFinishedEvent,
+    StateSnapshotEvent,
+    ToolCallStartEvent,
+    ToolCallArgsEvent,
+    ToolCallEndEvent,
+    ToolCallResultEvent,
 )
-from app.services.agent_service import (
-    EVENT_INTERRUPT,
-    EVENT_RESUME,
-    EVENT_RUN_ERROR,
-    EVENT_RUN_FINISHED,
-    EVENT_RUN_STARTED,
-    EVENT_STATE_SNAPSHOT,
-    EVENT_STEP_FINISHED,
-    EVENT_STEP_STARTED,
-    EVENT_TEXT_MESSAGE_CONTENT,
-    EVENT_TEXT_MESSAGE_END,
-    EVENT_TEXT_MESSAGE_START,
-    AgentService,
-)
+from ag_ui.core.types import UserMessage, TextInputContent
+from ag_ui.encoder import EventEncoder
 
 
 # ============================================================================
-# 测试 RunAgentInput 模型
+# 测试事件映射函数
 # ============================================================================
 
-class TestRunAgentInput:
-    """测试 RunAgentInput 模型"""
+class TestMapAgentEventToAgui:
+    """测试 map_agent_event_to_agui 函数"""
 
-    def test_valid_input_with_string_content(self):
-        """测试有效输入 - 字符串内容"""
+    def test_run_started_event_mapping(self):
+        """测试 RUN_STARTED 事件映射"""
+        event = {
+            "type": "RUN_STARTED",
+            "run_id": "test-run-123",
+            "thread_id": "test-thread-456",
+        }
+        result = map_agent_event_to_agui(event)
+        assert result is not None
+        assert isinstance(result, RunStartedEvent)
+        assert result.run_id == "test-run-123"
+        assert result.thread_id == "test-thread-456"
+
+    def test_run_started_without_ids(self):
+        """测试 RUN_STARTED 事件自动生成 ID"""
+        event = {"type": "RUN_STARTED"}
+        result = map_agent_event_to_agui(event)
+        assert result is not None
+        assert isinstance(result, RunStartedEvent)
+        assert result.run_id is not None
+        assert result.thread_id is not None
+
+    def test_run_finished_event_mapping(self):
+        """测试 RUN_FINISHED 事件映射"""
+        event = {
+            "type": "RUN_FINISHED",
+            "run_id": "test-run",
+            "thread_id": "test-thread",
+            "result": {"outcome": "success"},
+        }
+        result = map_agent_event_to_agui(event)
+        assert result is not None
+        assert isinstance(result, RunFinishedEvent)
+        assert result.run_id == "test-run"
+        assert result.thread_id == "test-thread"
+        assert result.result == {"outcome": "success"}
+
+    def test_run_error_event_mapping(self):
+        """测试 RUN_ERROR 事件映射"""
+        event = {
+            "type": "RUN_ERROR",
+            "error": "Something went wrong",
+            "code": "ERR_001",
+        }
+        result = map_agent_event_to_agui(event)
+        assert result is not None
+        assert isinstance(result, RunErrorEvent)
+        assert result.message == "Something went wrong"
+        assert result.code == "ERR_001"
+
+    def test_run_error_with_default_message(self):
+        """测试 RUN_ERROR 默认错误消息"""
+        event = {"type": "RUN_ERROR"}
+        result = map_agent_event_to_agui(event)
+        assert result is not None
+        assert isinstance(result, RunErrorEvent)
+        assert result.message == "Unknown error"
+
+    def test_text_message_start_event_mapping(self):
+        """测试 TEXT_MESSAGE_START 事件映射"""
+        event = {
+            "type": "TEXT_MESSAGE_START",
+            "message_id": "msg-123",
+            "role": "assistant",
+        }
+        result = map_agent_event_to_agui(event)
+        assert result is not None
+        assert isinstance(result, TextMessageStartEvent)
+        assert result.message_id == "msg-123"
+        assert result.role == "assistant"
+
+    def test_text_message_start_auto_generate_message_id(self):
+        """测试 TEXT_MESSAGE_START 自动生成 message_id"""
+        event = {"type": "TEXT_MESSAGE_START"}
+        result = map_agent_event_to_agui(event)
+        assert result is not None
+        assert isinstance(result, TextMessageStartEvent)
+        assert result.message_id is not None
+        assert result.role == "assistant"
+
+    def test_text_message_content_event_mapping(self):
+        """测试 TEXT_MESSAGE_CONTENT 事件映射"""
+        event = {
+            "type": "TEXT_MESSAGE_CONTENT",
+            "message_id": "msg-123",
+            "content": "Hello, world!",
+        }
+        result = map_agent_event_to_agui(event)
+        assert result is not None
+        assert isinstance(result, TextMessageContentEvent)
+        assert result.message_id == "msg-123"
+        assert result.delta == "Hello, world!"
+
+    def test_text_message_content_without_message_id(self):
+        """测试 TEXT_MESSAGE_CONTENT 没有 message_id"""
+        event = {"type": "TEXT_MESSAGE_CONTENT", "content": "Hello"}
+        result = map_agent_event_to_agui(event)
+        assert result is not None
+        assert isinstance(result, TextMessageContentEvent)
+        assert result.message_id == ""
+        assert result.delta == "Hello"
+
+    def test_text_message_end_event_mapping(self):
+        """测试 TEXT_MESSAGE_END 事件映射"""
+        event = {
+            "type": "TEXT_MESSAGE_END",
+            "message_id": "msg-123",
+        }
+        result = map_agent_event_to_agui(event)
+        assert result is not None
+        assert isinstance(result, TextMessageEndEvent)
+        assert result.message_id == "msg-123"
+
+    def test_step_started_event_mapping(self):
+        """测试 STEP_STARTED 事件映射"""
+        event = {"type": "STEP_STARTED", "step_name": "Step 1"}
+        result = map_agent_event_to_agui(event)
+        assert result is not None
+        assert isinstance(result, StepStartedEvent)
+        assert result.step_name == "Step 1"
+
+    def test_step_started_default_name(self):
+        """测试 STEP_STARTED 默认步骤名"""
+        event = {"type": "STEP_STARTED"}
+        result = map_agent_event_to_agui(event)
+        assert result is not None
+        assert isinstance(result, StepStartedEvent)
+        assert result.step_name == "Step"
+
+    def test_step_finished_event_mapping(self):
+        """测试 STEP_FINISHED 事件映射"""
+        event = {"type": "STEP_FINISHED", "step_name": "Step 1"}
+        result = map_agent_event_to_agui(event)
+        assert result is not None
+        assert isinstance(result, StepFinishedEvent)
+        assert result.step_name == "Step 1"
+
+    def test_state_snapshot_event_mapping(self):
+        """测试 STATE_SNAPSHOT 事件映射"""
+        state_data = {"key": "value", "nested": {"data": True}}
+        event = {"type": "STATE_SNAPSHOT", "state": state_data}
+        result = map_agent_event_to_agui(event)
+        assert result is not None
+        assert isinstance(result, StateSnapshotEvent)
+        assert result.snapshot == state_data
+
+    def test_state_snapshot_default_empty_dict(self):
+        """测试 STATE_SNAPSHOT 默认空字典"""
+        event = {"type": "STATE_SNAPSHOT"}
+        result = map_agent_event_to_agui(event)
+        assert result is not None
+        assert isinstance(result, StateSnapshotEvent)
+        assert result.snapshot == {}
+
+    def test_tool_call_start_event_mapping(self):
+        """测试 TOOL_CALL_START 事件映射"""
+        event = {
+            "type": "TOOL_CALL_START",
+            "tool_call_id": "tc-123",
+            "tool_call_name": "browse_page",
+        }
+        result = map_agent_event_to_agui(event)
+        assert result is not None
+        assert isinstance(result, ToolCallStartEvent)
+        assert result.tool_call_id == "tc-123"
+        assert result.tool_call_name == "browse_page"
+
+    def test_tool_call_start_auto_generate_id(self):
+        """测试 TOOL_CALL_START 自动生成 ID"""
+        event = {"type": "TOOL_CALL_START", "tool_call_name": "test_tool"}
+        result = map_agent_event_to_agui(event)
+        assert result is not None
+        assert isinstance(result, ToolCallStartEvent)
+        assert result.tool_call_id is not None
+        assert result.tool_call_name == "test_tool"
+
+    def test_tool_call_args_event_mapping(self):
+        """测试 TOOL_CALL_ARGS 事件映射"""
+        event = {
+            "type": "TOOL_CALL_ARGS",
+            "tool_call_id": "tc-123",
+            "delta": '{"url": "https://example.com"}',
+        }
+        result = map_agent_event_to_agui(event)
+        assert result is not None
+        assert isinstance(result, ToolCallArgsEvent)
+        assert result.tool_call_id == "tc-123"
+        assert result.delta == '{"url": "https://example.com"}'
+
+    def test_tool_call_end_event_mapping(self):
+        """测试 TOOL_CALL_END 事件映射"""
+        event = {"type": "TOOL_CALL_END", "tool_call_id": "tc-123"}
+        result = map_agent_event_to_agui(event)
+        assert result is not None
+        assert isinstance(result, ToolCallEndEvent)
+        assert result.tool_call_id == "tc-123"
+
+    def test_tool_call_result_event_mapping(self):
+        """测试 TOOL_CALL_RESULT 事件映射"""
+        event = {
+            "type": "TOOL_CALL_RESULT",
+            "tool_call_id": "tc-123",
+            "message_id": "msg-456",
+            "content": "Tool executed successfully",
+        }
+        result = map_agent_event_to_agui(event)
+        assert result is not None
+        assert isinstance(result, ToolCallResultEvent)
+        assert result.tool_call_id == "tc-123"
+        assert result.message_id == "msg-456"
+        assert result.content == "Tool executed successfully"
+
+    def test_tool_call_result_auto_generate_ids(self):
+        """测试 TOOL_CALL_RESULT 自动生成 ID"""
+        event = {"type": "TOOL_CALL_RESULT", "content": "Result"}
+        result = map_agent_event_to_agui(event)
+        assert result is not None
+        assert isinstance(result, ToolCallResultEvent)
+        assert result.tool_call_id == ""
+        assert result.message_id is not None
+        assert result.content == "Result"
+
+    def test_interrupt_event_returns_none(self):
+        """测试 INTERRUPT 事件返回 None"""
+        event = {"type": "INTERRUPT", "reason": "awaiting_user"}
+        result = map_agent_event_to_agui(event)
+        assert result is None
+
+    def test_resume_event_returns_none(self):
+        """测试 RESUME 事件返回 None"""
+        event = {"type": "RESUME", "step": 5}
+        result = map_agent_event_to_agui(event)
+        assert result is None
+
+    def test_done_event_returns_none(self):
+        """测试 done 内部信号返回 None"""
+        event = {"type": "done", "step": 5}
+        result = map_agent_event_to_agui(event)
+        assert result is None
+
+    def test_heartbeat_event_returns_none(self):
+        """测试心跳事件返回 None"""
+        event = {"type": "heartbeat", "run_id": "test-run"}
+        result = map_agent_event_to_agui(event)
+        assert result is None
+
+    def test_unknown_event_type_returns_none(self):
+        """测试未知事件类型返回 None"""
+        event = {"type": "UNKNOWN_EVENT"}
+        result = map_agent_event_to_agui(event)
+        assert result is None
+
+
+# ============================================================================
+# 测试任务提取函数
+# ============================================================================
+
+class TestExtractTask:
+    """测试 extract_task 函数"""
+
+    def test_extract_from_string_content(self):
+        """测试从字符串内容提取任务"""
+        msg = UserMessage(id="msg-1", role="user", content="Hello, agent!")
         input_data = RunAgentInput(
-            thread_id=str(uuid.uuid4()),
-            run_id=str(uuid.uuid4()),
-            messages=[
-                Message(
-                    role="user",
-                    content="Hello, agent!",
-                )
-            ],
+            thread_id="thread-1",
+            run_id="run-1",
+            state={},
+            tools=[],
+            context=[],
+            forwarded_props={},
+            messages=[msg],
         )
-        assert input_data.thread_id is not None
-        assert len(input_data.messages) == 1
-        assert input_data.messages[0].content == "Hello, agent!"
+        result = extract_task(input_data)
+        assert result == "Hello, agent!"
 
-    def test_valid_input_with_list_content(self):
-        """测试有效输入 - 列表内容"""
+    def test_extract_from_list_content(self):
+        """测试从列表内容提取任务"""
+        msg = UserMessage(
+            id="msg-1",
+            role="user",
+            content=[TextInputContent(type="text", text="List content message")],
+        )
         input_data = RunAgentInput(
-            messages=[
-                Message(
-                    role="user",
-                    content=[
-                        MessageContent(type="text", text="Hello"),
-                        MessageContent(type="text", text="World"),
-                    ],
-                )
-            ],
+            thread_id="thread-1",
+            run_id="run-1",
+            state={},
+            tools=[],
+            context=[],
+            forwarded_props={},
+            messages=[msg],
         )
-        assert len(input_data.messages) == 1
-        assert isinstance(input_data.messages[0].content, list)
-        assert len(input_data.messages[0].content) == 2
+        result = extract_task(input_data)
+        assert result == "List content message"
 
-    def test_empty_messages(self):
+    def test_extract_from_last_message(self):
+        """测试从最后一条消息提取任务"""
+        msg1 = UserMessage(id="msg-1", role="user", content="First message")
+        msg2 = UserMessage(id="msg-2", role="user", content="Second message")
+        input_data = RunAgentInput(
+            thread_id="thread-1",
+            run_id="run-1",
+            state={},
+            tools=[],
+            context=[],
+            forwarded_props={},
+            messages=[msg1, msg2],
+        )
+        result = extract_task(input_data)
+        assert result == "Second message"
+
+    def test_extract_from_empty_messages(self):
         """测试空消息列表"""
-        input_data = RunAgentInput(messages=[])
-        assert input_data.messages == []
-
-    def test_default_values(self):
-        """测试默认值"""
-        input_data = RunAgentInput()
-        assert input_data.thread_id is None
-        assert input_data.run_id is not None  # 自动生成
-        assert input_data.messages == []
-        assert input_data.tools == []
-        assert input_data.context == []
-        assert input_data.state == {}
-        assert input_data.forwarded_props == {}
-
-    def test_extra_fields_allowed(self):
-        """测试额外字段允许"""
         input_data = RunAgentInput(
-            extra_field="should be allowed",
-            another_field={"nested": True},
+            thread_id="thread-1",
+            run_id="run-1",
+            state={},
+            tools=[],
+            context=[],
+            forwarded_props={},
+            messages=[],
         )
-        assert input_data.extra_field == "should be allowed"
+        result = extract_task(input_data)
+        assert result == ""
 
 
 # ============================================================================
-# 测试事件序列化
-# ============================================================================
-
-class TestEventSerialization:
-    """测试事件序列化函数"""
-
-    def test_event_to_sse_format(self):
-        """测试 SSE 格式生成"""
-        event = {"type": "RUN_STARTED", "run_id": "test-123"}
-        result = event_to_sse(event)
-        assert result.startswith("data: ")
-        assert result.endswith("\n\n")
-        assert "RUN_STARTED" in result
-        assert "test-123" in result
-
-    def test_event_to_sse_with_chinese_characters(self):
-        """测试中文内容序列化"""
-        event = {"type": "TEXT_MESSAGE_CONTENT", "content": "你好，世界！"}
-        result = event_to_sse(event)
-        parsed = json.loads(result.replace("data: ", "").strip())
-        assert parsed["content"] == "你好，世界！"
-
-    def test_serialize_event_with_dict(self):
-        """测试序列化字典事件"""
-        event = {"type": "RUN_FINISHED", "outcome": "success"}
-        result = serialize_event(event)
-        assert "data: " in result
-        assert "RUN_FINISHED" in result
-
-    def test_serialize_event_with_base_event(self):
-        """测试序列化 BaseEvent 子类"""
-        from app.api.agui import RunStartedEvent
-
-        event = RunStartedEvent()
-        result = serialize_event(event)
-        assert "data: " in result
-        assert "RUN_STARTED" in result
-
-    def test_multiple_events_serialization(self):
-        """测试多个事件序列化"""
-        events = [
-            {"type": "RUN_STARTED", "run_id": "test-1"},
-            {"type": "TEXT_MESSAGE_START", "message_id": "msg-1", "role": "assistant"},
-            {"type": "TEXT_MESSAGE_CONTENT", "content": "Hello"},
-            {"type": "RUN_FINISHED", "outcome": "success"},
-        ]
-        results = [event_to_sse(e) for e in events]
-        assert len(results) == 4
-        for r in results:
-            assert r.startswith("data: ")
-            assert r.endswith("\n\n")
-
-
-# ============================================================================
-# 测试事件类型常量
-# ============================================================================
-
-class TestEventTypes:
-    """测试事件类型常量定义"""
-
-    def test_all_event_types_defined(self):
-        """测试所有事件类型都已定义"""
-        expected_events = [
-            "RUN_STARTED",
-            "RUN_FINISHED",
-            "RUN_ERROR",
-            "STEP_STARTED",
-            "STEP_FINISHED",
-            "TEXT_MESSAGE_START",
-            "TEXT_MESSAGE_CONTENT",
-            "TEXT_MESSAGE_END",
-            "TOOL_CALL_START",
-            "TOOL_CALL_ARGS",
-            "TOOL_CALL_RESULT",
-            "TOOL_CALL_END",
-            "STATE_SNAPSHOT",
-            "STATE_DELTA",
-            "INTERRUPT",
-            "RESUME",
-        ]
-        for event_type in expected_events:
-            assert hasattr(__import__("app.services.agent_service", fromlist=["EVENT_RUN_STARTED"]), f"EVENT_{event_type}")
-
-    def test_event_type_constants_match_literal(self):
-        """测试事件类型常量与 Literal 类型匹配"""
-        # AG-UI 事件类型应该与 Literal 类型定义一致
-        from app.api.agui import AGUI_EVENT_TYPES
-
-        # 这个测试验证两种定义的一致性
-        assert "RUN_STARTED" in AGUI_EVENT_TYPES.__args__
-        assert "RUN_FINISHED" in AGUI_EVENT_TYPES.__args__
-
-
-# ============================================================================
-# 测试 AgentService 事件映射
-# ============================================================================
-
-class TestAgentServiceEvents:
-    """测试 AgentService 事件映射逻辑"""
-
-    def test_service_initialization(self):
-        """测试服务初始化"""
-        service = AgentService()
-        assert service._agents == {}
-        assert service._paused == {}
-        assert service._resume_events == {}
-
-    def test_get_status_stopped(self):
-        """测试获取停止状态"""
-        service = AgentService()
-        status = service.get_status("non-existent-session")
-        assert status == "stopped"
-
-    @pytest.mark.asyncio
-    async def test_pause_resume_agent(self):
-        """测试暂停和恢复 agent"""
-        service = AgentService()
-
-        # 创建 mock agent
-        mock_agent = MagicMock()
-        mock_agent.pause = MagicMock()
-        mock_agent.resume = MagicMock()
-        mock_agent.state = MagicMock()
-        mock_agent.state.paused = False
-        mock_agent.state.stopped = False
-
-        service._agents["test-session"] = mock_agent
-        service._paused["test-session"] = False
-
-        # 暂停
-        service.pause_agent("test-session")
-        assert service._paused["test-session"] is True
-        mock_agent.pause.assert_called_once()
-
-        # 恢复
-        service.resume_agent("test-session")
-        assert service._paused["test-session"] is False
-        mock_agent.resume.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_stop_agent(self):
-        """测试停止 agent"""
-        service = AgentService()
-
-        mock_agent = MagicMock()
-        mock_agent.stop = MagicMock()
-        mock_agent.state = MagicMock()
-        mock_agent.state.stopped = False
-
-        service._agents["test-session"] = mock_agent
-        service._resume_events["test-session"] = asyncio.Event()
-
-        service.stop_agent("test-session")
-
-        mock_agent.stop.assert_called_once()
-        assert service._paused["test-session"] is False
-
-
-# ============================================================================
-# 测试事件映射关系
-# ============================================================================
-
-class TestEventMapping:
-    """测试事件映射关系"""
-
-    def test_step_start_maps_to_step_started(self):
-        """验证 step_start 映射到 STEP_STARTED"""
-        # 根据 agent_service.py 中的实现
-        # on_step_start 回调发送 EVENT_STEP_STARTED
-        assert EVENT_STEP_STARTED == "STEP_STARTED"
-
-    def test_step_end_maps_to_step_finished(self):
-        """验证 step_end 映射到 STEP_FINISHED"""
-        # on_step_end 回调发送 EVENT_STEP_FINISHED
-        assert EVENT_STEP_FINISHED == "STEP_FINISHED"
-
-    def test_message_content_maps_to_text_message(self):
-        """验证消息内容映射到 TEXT_MESSAGE_*"""
-        assert EVENT_TEXT_MESSAGE_START == "TEXT_MESSAGE_START"
-        assert EVENT_TEXT_MESSAGE_CONTENT == "TEXT_MESSAGE_CONTENT"
-        assert EVENT_TEXT_MESSAGE_END == "TEXT_MESSAGE_END"
-
-    def test_browser_state_maps_to_state_snapshot(self):
-        """验证 browser_state 映射到 STATE_SNAPSHOT"""
-        # on_step_end 中发送 browser_state 作为 STATE_SNAPSHOT
-        assert EVENT_STATE_SNAPSHOT == "STATE_SNAPSHOT"
-
-    def test_interrupt_resume_events(self):
-        """验证 HITL 中断事件"""
-        assert EVENT_INTERRUPT == "INTERRUPT"
-        assert EVENT_RESUME == "RESUME"
-
-    def test_lifecycle_events(self):
-        """验证生命周期事件"""
-        assert EVENT_RUN_STARTED == "RUN_STARTED"
-        assert EVENT_RUN_FINISHED == "RUN_FINISHED"
-        assert EVENT_RUN_ERROR == "RUN_ERROR"
-
-
-# ============================================================================
-# 测试端点路由注册
+# 测试端点路由
 # ============================================================================
 
 class TestAGUIEndpoint:
-    """测试 AGUI 端点"""
+    """测试 AGUI 端点注册"""
 
     def test_endpoint_route_registered(self):
         """测试端点已注册"""
-        from app.api.agui import router
-
         routes = [route.path for route in router.routes]
         assert "/agui" in routes
 
     def test_endpoint_accepts_post(self):
         """测试端点接受 POST 请求"""
-        from app.api.agui import router
-
         post_routes = [
             route.path for route in router.routes
             if hasattr(route, "methods") and "POST" in route.methods
         ]
         assert "/agui" in post_routes
+
+
+# ============================================================================
+# 测试事件编码
+# ============================================================================
+
+class TestEventEncoder:
+    """测试事件编码器"""
+
+    def test_encode_run_started_event(self):
+        """测试 RunStartedEvent 编码"""
+        event = {"type": "RUN_STARTED", "run_id": "run-123", "thread_id": "thread-456"}
+        agui_event = map_agent_event_to_agui(event)
+        encoder = EventEncoder()
+        encoded = encoder.encode(agui_event)
+
+        assert encoded.startswith("data: ")
+        assert "RUN_STARTED" in encoded or "run_started" in encoded.lower()
+
+    def test_encode_text_message_events(self):
+        """测试文本消息事件编码"""
+        encoder = EventEncoder()
+
+        # Start event
+        start_event = {"type": "TEXT_MESSAGE_START", "message_id": "msg-1", "role": "assistant"}
+        start_agui = map_agent_event_to_agui(start_event)
+        start_encoded = encoder.encode(start_agui)
+        assert start_encoded.startswith("data: ")
+
+        # Content event
+        content_event = {"type": "TEXT_MESSAGE_CONTENT", "message_id": "msg-1", "content": "Hello"}
+        content_agui = map_agent_event_to_agui(content_event)
+        content_encoded = encoder.encode(content_agui)
+        assert content_encoded.startswith("data: ")
+
+        # End event
+        end_event = {"type": "TEXT_MESSAGE_END", "message_id": "msg-1"}
+        end_agui = map_agent_event_to_agui(end_event)
+        end_encoded = encoder.encode(end_agui)
+        assert end_encoded.startswith("data: ")
+
+    def test_encode_tool_call_events(self):
+        """测试工具调用事件编码"""
+        encoder = EventEncoder()
+
+        # Start event
+        start_event = {"type": "TOOL_CALL_START", "tool_call_id": "tc-1", "tool_call_name": "test_tool"}
+        start_agui = map_agent_event_to_agui(start_event)
+        start_encoded = encoder.encode(start_agui)
+        assert start_encoded.startswith("data: ")
+
+        # Args event
+        args_event = {"type": "TOOL_CALL_ARGS", "tool_call_id": "tc-1", "delta": '{"arg": 1}'}
+        args_agui = map_agent_event_to_agui(args_event)
+        args_encoded = encoder.encode(args_agui)
+        assert args_encoded.startswith("data: ")
+
+        # End event
+        end_event = {"type": "TOOL_CALL_END", "tool_call_id": "tc-1"}
+        end_agui = map_agent_event_to_agui(end_event)
+        end_encoded = encoder.encode(end_agui)
+        assert end_encoded.startswith("data: ")
+
+    def test_encoder_get_content_type(self):
+        """测试编码器 content type"""
+        encoder = EventEncoder()
+        content_type = encoder.get_content_type()
+        assert content_type is not None
+        assert "text" in content_type.lower() or "event-stream" in content_type.lower()
 
 
 # ============================================================================

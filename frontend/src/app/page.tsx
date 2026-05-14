@@ -1,73 +1,39 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { Sidebar } from "@/components/sidebar/Sidebar";
 import { ChatWindow } from "@/components/chat/ChatWindow";
 import { BrowserPreview } from "@/components/browser/BrowserPreview";
-import { BrowserState, AgentStatus, Session } from "@/types";
-import { fetchSessions, createSession } from "@/lib/api";
+import { useState } from "react";
 
 export default function Home() {
-  const [currentSessionId, setCurrentSessionId] = useState<string>("");
-  const [browserState, setBrowserState] = useState<BrowserState>({ url: "", title: "" });
-  const [agentStatus, setAgentStatus] = useState<AgentStatus>("stopped");
-  const initRef = useRef(false);
+	const [browserState, setBrowserState] = useState({ url: "", title: "", screenshot: undefined as string | undefined });
 
-  useEffect(() => {
-    if (!initRef.current) {
-      initRef.current = true;
-      fetchSessions()
-        .then((sessions: Session[]) => {
-          if (sessions.length > 0) {
-            // Use most recent session
-            setCurrentSessionId(sessions[0].id);
-          } else {
-            // No sessions, create one
-            createSession().then((session) => {
-              setCurrentSessionId(session.id);
-            });
-          }
-        })
-        .catch((err) => {
-          console.error("Failed to load sessions:", err);
-        });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const handleEvent = (event: any) => {
-    switch (event.type) {
-      case "browser_state":
-        setBrowserState({ url: event.url, title: event.title, screenshot: event.screenshot });
-        break;
-      case "paused":
-        setAgentStatus("paused");
-        break;
-      case "done":
-        setAgentStatus("stopped");
-        break;
-      case "user_message":
-        setAgentStatus("running");
-        break;
-    }
-  };
-
-  return (
-    <div className="grid grid-cols-[240px_440px_1fr] h-screen">
-      <Sidebar
-        currentSessionId={currentSessionId || null}
-        onSessionChange={setCurrentSessionId}
-      />
-      <div className="h-full border-r border-gray-200">
-        {currentSessionId ? (
-          <ChatWindow sessionId={currentSessionId} onEvent={handleEvent} />
-        ) : (
-          <div className="flex-1 flex items-center justify-center text-gray-400 h-full">
-            Initializing session...
-          </div>
-        )}
-      </div>
-      <BrowserPreview state={browserState} />
-    </div>
-  );
+	return (
+		<div className="grid grid-cols-[240px_440px_1fr] h-dvh">
+			{/* Sidebar */}
+			<div className="flex flex-col h-full bg-gray-50 border-r border-gray-200">
+				<div className="p-3 flex items-center gap-2 border-b border-gray-200">
+					<div className="w-7 h-7 bg-blue-500 rounded-lg flex items-center justify-center">
+						<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="white" strokeWidth="1.5">
+							<path d="M8 2L14 5V11L8 14L2 11V5L8 2Z"></path>
+						</svg>
+					</div>
+					<span className="font-semibold text-sm">AI Workspace</span>
+				</div>
+				<button className="mx-3 my-2 flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-full text-sm text-gray-600 hover:border-blue-400 hover:text-blue-500 shadow-sm">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+						<line x1="12" y1="5" x2="12" y2="19"></line>
+						<line x1="5" y1="12" x2="19" y2="12"></line>
+					</svg>
+					New Chat
+				</button>
+				<div className="flex-1 overflow-y-auto px-2 py-1"></div>
+			</div>
+			{/* Chat Window */}
+			<div className="h-full border-r border-gray-200">
+				<ChatWindow />
+			</div>
+			{/* Browser Preview */}
+			<BrowserPreview state={browserState} />
+		</div>
+	);
 }

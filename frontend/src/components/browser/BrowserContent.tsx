@@ -15,7 +15,7 @@ export function BrowserContent({ state }: Props) {
 				/>
 			) : (
 				<>
-					<div className="w-14 h-14 rounded-xl bg-gradient-to-br from-violet-100 to-purple-100 flex items-center justify-center text-violet-500">
+					<div className="w-14 h-14 rounded-xl bg-linear-to-br from-violet-100 to-purple-100 flex items-center justify-center text-violet-500">
 						<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
 							<rect x="2" y="3" width="20" height="14" rx="2" />
 							<line x1="8" y1="21" x2="16" y2="21" />
@@ -25,9 +25,9 @@ export function BrowserContent({ state }: Props) {
 					<p className="text-sm text-gray-400">Browser preview area</p>
 					<p className="text-xs text-gray-400 opacity-70">Embedded browser will render content here</p>
 					<div className="flex gap-1.5">
-						<span className="w-1.5 h-1.5 bg-gray-300 rounded-full" />
-						<span className="w-1.5 h-1.5 bg-gray-300 rounded-full" />
-						<span className="w-1.5 h-1.5 bg-gray-300 rounded-full" />
+						<span className="size-1.5 bg-gray-300 rounded-full" />
+						<span className="size-1.5 bg-gray-300 rounded-full" />
+						<span className="size-1.5 bg-gray-300 rounded-full" />
 					</div>
 				</>
 			)}

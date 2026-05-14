@@ -28,7 +28,7 @@ async def chat(req: ChatRequest) -> StreamingResponse:
 	async def event_generator() -> AsyncGenerator[str, None]:
 		event_queue: asyncio.Queue[dict] = asyncio.Queue()
 
-		async def on_event(event: dict) -> None:
+		async def on_event(event: dict):
 			await event_queue.put(event)
 
 		try:
