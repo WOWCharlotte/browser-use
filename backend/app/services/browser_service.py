@@ -28,9 +28,18 @@ class BrowserService:
 		browser = sess["browser"]
 		try:
 			page = await browser.get_current_page()
-			url = page.url if page else ""
-			title = await page.title() if page else ""
-			screenshot = await page.screenshot() if page else ""
+			if page is None:
+				return {"url": "", "title": "", "screenshot": ""}
+			# page.url 是属性，page.title() 和 page.screenshot() 是异步方法
+			url = getattr(page, 'url', '') or ''
+			if callable(getattr(page, 'title', None)):
+				title = await page.title()
+			else:
+				title = getattr(page, 'title', '') or ''
+			if callable(getattr(page, 'screenshot', None)):
+				screenshot = await page.screenshot()
+			else:
+				screenshot = getattr(page, 'screenshot', '') or ''
 			return {"url": url, "title": title, "screenshot": screenshot}
 		except Exception as e:
 			return {"url": "", "title": "", "screenshot": "", "error": str(e)}

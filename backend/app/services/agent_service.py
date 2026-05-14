@@ -83,11 +83,7 @@ class AgentService:
 		if session_id not in browser_service._sessions:
 			await browser_service.create_session(session_id)
 
-		agent = self._agents.get(session_id)
-		if not agent:
-			agent = await self.create_agent(session_id, message)
-		else:
-			agent.task = agent.task+"\n"+message
+		agent = await self.create_agent(session_id, message)
 
 		step_count = 0
 		message_id = str(uuid.uuid4())
@@ -130,25 +126,51 @@ class AgentService:
 			nonlocal step_count, message_id
 			step_count = agent_instance.state.n_steps
 
-			# 发送文本内容
-			if agent_instance.history and agent_instance.history.history:
-				last_item = agent_instance.history.history[-1]
-				if last_item.result:
-					for result in last_item.result:
-						if result.error:
-							# 错误内容作为 TEXT_MESSAGE_CONTENT 发送
-							await on_event({
-								"type": EVENT_TEXT_MESSAGE_CONTENT,
-								"message_id": message_id,
-								"content": f"Error: {result.error}",
-							})
-						elif result.extracted_content:
-							# 提取的内容作为 TEXT_MESSAGE_CONTENT 发送
-							await on_event({
-								"type": EVENT_TEXT_MESSAGE_CONTENT,
-								"message_id": message_id,
-								"content": result.extracted_content,
-							})
+			if not agent_instance.history or not agent_instance.history.history:
+				return
+
+			last_item = agent_instance.history.history[-1]
+
+			if last_item.model_output:
+				output = last_item.model_output
+				parts: list[str] = []
+				if output.thinking:
+					parts.append(f"思考: {output.thinking}")
+				if output.memory:
+					parts.append(f"记忆: {output.memory}")
+				if output.evaluation_previous_goal:
+					parts.append(f"上一步评估: {output.evaluation_previous_goal}")
+				if output.next_goal:
+					parts.append(f"下一步目标: {output.next_goal}")
+				if output.plan_update:
+					parts.append(f"计划更新: {' -> '.join(output.plan_update)}")
+				if parts:
+					await on_event({
+						"type": EVENT_TEXT_MESSAGE_CONTENT,
+						"message_id": message_id,
+						"content": "\n".join(parts),
+					})
+
+			if last_item.result:
+				for result in last_item.result:
+					if result.error:
+						await on_event({
+							"type": EVENT_TEXT_MESSAGE_CONTENT,
+							"message_id": message_id,
+							"content": f"Error: {result.error}",
+						})
+					if result.long_term_memory:
+						await on_event({
+							"type": EVENT_TEXT_MESSAGE_CONTENT,
+							"message_id": message_id,
+							"content": f"长期记忆: {result.long_term_memory}",
+						})
+					elif result.extracted_content:
+						await on_event({
+							"type": EVENT_TEXT_MESSAGE_CONTENT,
+							"message_id": message_id,
+							"content": result.extracted_content,
+						})
 
 			# 发送 TEXT_MESSAGE_END
 			await on_event({
