@@ -9,15 +9,15 @@ import { CopilotChat } from "@copilotkit/react-core/v2";
 
 interface Props {
 	sessionId?: string;
-	onEvent?: (event: any) => void;
 }
 
-export function ChatWindow(_props?: Props) {
+export function ChatWindow({ sessionId }: Props) {
 	return (
 		<div className="flex justify-center items-center h-full w-full">
 			<div className="h-full w-full">
 				<CopilotChat
 					agentId="default"
+					threadId={sessionId}
 					className="h-full rounded-none max-w-none mx-0"
 				/>
 			</div>
