@@ -1,44 +1,46 @@
+# Browser Use
+
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="https://github.com/user-attachments/assets/2ccdb752-22fb-41c7-8948-857fc1ad7e24">
   <source media="(prefers-color-scheme: dark)" srcset="https://github.com/user-attachments/assets/774a46d5-27a0-490c-b7d0-e65fcbbfa358">
-  <img alt="Shows a black Browser Use Logo in light color mode and a white one in dark color mode." src="https://github.com/user-attachments/assets/2ccdb752-22fb-41c7-8948-857fc1ad7e24"  width="full">
+  <img alt="Shows a black Browser Use Logo in light color mode and a white one in dark color mode." src="https://github.com/user-attachments/assets/2ccdb752-22fb-41c7-8948-857fc1ad7e24" width="full">
 </picture>
 
 <div align="center">
-    <picture>
+  <picture>
     <source media="(prefers-color-scheme: light)" srcset="https://github.com/user-attachments/assets/9955dda9-ede3-4971-8ee0-91cbc3850125">
     <source media="(prefers-color-scheme: dark)" srcset="https://github.com/user-attachments/assets/6797d09b-8ac3-4cb9-ba07-b289e080765a">
-    <img alt="The AI browser agent." src="https://github.com/user-attachments/assets/9955dda9-ede3-4971-8ee0-91cbc3850125"  width="400">
-    </picture>
+    <img alt="The AI browser agent." src="https://github.com/user-attachments/assets/9955dda9-ede3-4971-8ee0-91cbc3850125" width="400">
+  </picture>
 </div>
 
 <div align="center">
-<a href="https://cloud.browser-use.com?utm_source=github&utm_medium=readme-badge-downloads"><img src="https://media.browser-use.tools/badges/package" height="48" alt="Browser-Use Package Download Statistics"></a>
+  <a href="https://cloud.browser-use.com?utm_source=github&utm_medium=readme-badge-downloads"><img src="https://media.browser-use.tools/badges/package" height="48" alt="Browser-Use Package Download Statistics"></a>
 </div>
 
 ---
 
 <div align="center">
-<a href="#demos"><img src="https://media.browser-use.tools/badges/demos" alt="Demos"></a>
-<img width="16" height="1" alt="">
-<a href="https://docs.browser-use.com"><img src="https://media.browser-use.tools/badges/docs" alt="Docs"></a>
-<img width="16" height="1" alt="">
-<a href="https://browser-use.com/posts"><img src="https://media.browser-use.tools/badges/blog" alt="Blog"></a>
-<img width="16" height="1" alt="">
-<a href="https://browsermerch.com"><img src="https://media.browser-use.tools/badges/merch" alt="Merch"></a>
-<img width="100" height="1" alt="">
-<a href="https://github.com/browser-use/browser-use"><img src="https://media.browser-use.tools/badges/github" alt="Github Stars"></a>
-<img width="4" height="1" alt="">
-<a href="https://x.com/intent/user?screen_name=browser_use"><img src="https://media.browser-use.tools/badges/twitter" alt="Twitter"></a>
-<img width="4" height="1" alt="">
-<a href="https://link.browser-use.com/discord"><img src="https://media.browser-use.tools/badges/discord" alt="Discord"></a>
-<img width="4" height="1" alt="">
-<a href="https://cloud.browser-use.com?utm_source=github&utm_medium=readme-badge-cloud"><img src="https://media.browser-use.tools/badges/cloud" height="48" alt="Browser-Use Cloud"></a>
+  <a href="#demos"><img src="https://media.browser-use.tools/badges/demos" alt="Demos"></a>
+  <img width="16" height="1" alt="">
+  <a href="https://docs.browser-use.com"><img src="https://media.browser-use.tools/badges/docs" alt="Docs"></a>
+  <img width="16" height="1" alt="">
+  <a href="https://browser-use.com/posts"><img src="https://media.browser-use.tools/badges/blog" alt="Blog"></a>
+  <img width="16" height="1" alt="">
+  <a href="https://browsermerch.com"><img src="https://media.browser-use.tools/badges/merch" alt="Merch"></a>
+  <img width="100" height="1" alt="">
+  <a href="https://github.com/browser-use/browser-use"><img src="https://media.browser-use.tools/badges/github" alt="Github Stars"></a>
+  <img width="4" height="1" alt="">
+  <a href="https://x.com/intent/user?screen_name=browser_use"><img src="https://media.browser-use.tools/badges/twitter" alt="Twitter"></a>
+  <img width="4" height="1" alt="">
+  <a href="https://link.browser-use.com/discord"><img src="https://media.browser-use.tools/badges/discord" alt="Discord"></a>
+  <img width="4" height="1" alt="">
+  <a href="https://cloud.browser-use.com?utm_source=github&utm_medium=readme-badge-cloud"><img src="https://media.browser-use.tools/badges/cloud" height="48" alt="Browser-Use Cloud"></a>
 </div>
 
 </br>
 
-🌤️ Want to skip the setup? Use our <b>[cloud](https://cloud.browser-use.com?utm_source=github&utm_medium=readme-skip-setup)</b> for faster, scalable, stealth-enabled browser automation!
+🌤️ Want to skip the setup? Use our **[cloud](https://cloud.browser-use.com?utm_source=github&utm_medium=readme-skip-setup)** for faster, scalable, stealth-enabled browser automation!
 
 # 🤖 LLM Quickstart
 
@@ -92,38 +94,87 @@ Check out the [library docs](https://docs.browser-use.com/open-source/introducti
 
 <br/>
 
-# Open Source vs Cloud
+# Project Structure
 
-<picture>
-  <source media="(prefers-color-scheme: light)" srcset="static/accuracy_by_model_light.png">
-  <source media="(prefers-color-scheme: dark)" srcset="static/accuracy_by_model_dark.png">
-  <img alt="BU Bench V1 - LLM Success Rates" src="static/accuracy_by_model_light.png" width="100%">
-</picture>
+This is a monorepo containing three main components:
 
-We benchmark Browser Use across 100 real-world browser tasks. Full benchmark is open source: **[browser-use/benchmark](https://github.com/browser-use/benchmark)**.
+```
+browser-use/
+├── README.md              # This file
+├── browser-use/           # Core Python library (publishes to PyPI)
+├── backend/               # FastAPI backend service
+│   ├── README.md          # English version
+│   └── README_zh.md       # 中文版
+└── frontend/              # Next.js web interface
+    └── README.md           # Frontend documentation
+```
 
-**Use the Open-Source Agent**
-- You need [custom tools](https://docs.browser-use.com/customize/tools/basics) or deep code-level integration
-- We recommend pairing with our [cloud browsers](https://docs.browser-use.com/open-source/customize/browser/remote) for leading stealth, proxy rotation, and scaling
-- Or self-host the open-source agent fully on your own machines
+### Core Library
 
-**Use the [Fully-Hosted Cloud Agent](https://cloud.browser-use.com?utm_source=github&utm_medium=readme-hosted-agent) (recommended)**
-- Much more powerful agent for complex tasks (see plot above)
-- Easiest way to start and scale
-- Best stealth with proxy rotation and captcha solving
-- 1000+ integrations (Gmail, Slack, Notion, and more)
-- Persistent filesystem and memory
+The `browser-use/` directory contains the open-source Python library that provides AI browser automation capabilities through LLMs and Chrome DevTools Protocol (CDP).
+
+**Resources:**
+- [library docs](https://docs.browser-use.com/open-source/introduction)
+- [Examples](https://docs.browser-use.com/examples)
+- [Benchmark](https://github.com/browser-use/benchmark)
+
+### Backend
+
+The `backend/` directory is a FastAPI-based backend service providing session management, agent control, and AG-UI protocol support with SSE streaming.
+
+**Tech Stack:** FastAPI, Uvicorn, SQLite (aiosqlite), browser-use, ag-ui-protocol
+
+**Quick Start:**
+```bash
+cd backend
+uv venv --python 3.11
+source .venv/bin/activate  # Linux/Mac
+# or: .venv\Scripts\activate  # Windows
+uv sync
+cp .env.example .env
+# Edit .env with your LLM settings
+uv run uvicorn app.main:app --reload --port 8888
+```
+
+**API Endpoints:**
+- `GET /api/sessions` - List sessions
+- `POST /api/sessions` - Create session
+- `POST /api/agent/pause` - Pause agent
+- `POST /api/agent/resume` - Resume agent
+- `POST /api/agui` - AG-UI protocol endpoint (SSE streaming)
+
+See [backend/README.md](backend/README.md) for full documentation.
+
+### Frontend
+
+The `frontend/` directory is a Next.js 14 web interface with a three-panel layout (Sidebar, Chat, Browser Preview), powered by CopilotKit and AG-UI Protocol.
+
+**Tech Stack:** Next.js 14, React 18, TailwindCSS 4, CopilotKit v1.57, AG-UI Protocol
+
+**Quick Start:**
+```bash
+cd frontend
+npm install
+npm run dev
+# Open http://localhost:3000
+```
+
+**Features:**
+- Real-time browser state snapshots via AG-UI Protocol
+- Session-based conversation management
+- Natural language browser automation
+
+See [frontend/README.md](frontend/README.md) for full documentation.
 
 <br/>
 
-# Demos
 
+# Demos
 
 ### 📋 Form-Filling
 #### Task = "Fill in this job application with my resume and information."
 ![Job Application Demo](https://github.com/user-attachments/assets/57865ee6-6004-49d5-b2c2-6dff39ec2ba9)
 [Example code ↗](https://github.com/browser-use/browser-use/blob/main/examples/use-cases/apply_to_job.py)
-
 
 ### 🍎 Grocery-Shopping
 #### Task = "Put this list of items into my instacart."
@@ -132,14 +183,12 @@ https://github.com/user-attachments/assets/a6813fa7-4a7c-40a6-b4aa-382bf88b1850
 
 [Example code ↗](https://github.com/browser-use/browser-use/blob/main/examples/use-cases/buy_groceries.py)
 
-
 ### 💻 Personal-Assistant.
 #### Task = "Help me find parts for a custom PC."
 
 https://github.com/user-attachments/assets/ac34f75c-057a-43ef-ad06-5b2c9d42bf06
 
 [Example code ↗](https://github.com/browser-use/browser-use/blob/main/examples/use-cases/pcpartpicker.py)
-
 
 ### 💡See [more examples here ↗](https://docs.browser-use.com/examples) and give us a star!
 
@@ -288,17 +337,3 @@ For production use cases, use our [Browser Use Cloud API](https://cloud.browser-
 </details>
 
 <br/>
-
-<div align="center">
-
-**Tell your computer what to do, and it gets it done.**
-
-<img src="https://github.com/user-attachments/assets/06fa3078-8461-4560-b434-445510c1766f" width="400"/>
-
-[![Twitter Follow](https://img.shields.io/twitter/follow/Magnus?style=social)](https://x.com/intent/user?screen_name=mamagnus00)
-&emsp;&emsp;&emsp;
-[![Twitter Follow](https://img.shields.io/twitter/follow/Gregor?style=social)](https://x.com/intent/user?screen_name=gregpr07)
-
-</div>
-
-<div align="center"> Made with ❤️ in Zurich and San Francisco </div>
