@@ -46,6 +46,7 @@ class AgentService:
 		self._paused: dict[str, bool] = {}
 		self._resume_events: dict[str, asyncio.Event] = {}
 		self._run_tasks: dict[str, asyncio.Task] = {}
+		self._history: dict[str, list[dict[str, Any]]] = {}
 
 	def _create_llm(self) -> ChatOpenAI:
 		return ChatOpenAI(
@@ -65,6 +66,7 @@ class AgentService:
 		self._agents[session_id] = agent
 		self._paused[session_id] = False
 		self._resume_events[session_id] = asyncio.Event()
+		self._history[session_id] = []
 		return agent
 
 	async def run_agent(
@@ -196,15 +198,21 @@ class AgentService:
 							interacted_data.append(None)
 					else:
 						interacted_data.append(None)
+
+			snapshot_state = {
+				"url": state.url,
+				"title": state.title,
+				"tabs": tabs_data,
+				"interacted_element": interacted_data,
+				"screenshot": state.get_screenshot(),
+				"history": list(self._history[session_id]),  # 浅拷贝避免循环引用
+			}
+
+			self._history[session_id].append(snapshot_state)
+
 			await on_event({
 				"type": EVENT_STATE_SNAPSHOT,
-				"state": {
-					"url": state.url,
-					"title": state.title,
-					"tabs": tabs_data,
-					"interacted_element": interacted_data,
-					"screenshot_path": state.screenshot_path,
-				},
+				"state": snapshot_state,
 			})
 
 		try:
