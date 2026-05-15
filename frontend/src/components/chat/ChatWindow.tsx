@@ -5,6 +5,7 @@
  * CopilotKit provider 已在 layout.tsx 中全局包裹。
  */
 "use client";
+import React, { useState, useEffect } from "react";
 import { CopilotChat } from "@copilotkit/react-core/v2";
 
 interface Props {
@@ -12,15 +13,18 @@ interface Props {
 }
 
 export function ChatWindow({ sessionId }: Props) {
+	const [height, setHeight] = useState(0);
+
+	useEffect(() => {
+		const updateHeight = () => setHeight(window.innerHeight);
+		updateHeight();
+		window.addEventListener("resize", updateHeight);
+		return () => window.removeEventListener("resize", updateHeight);
+	}, []);
+
 	return (
-		<div className="flex justify-center items-center h-full w-full">
-			<div className="h-full w-full">
-				<CopilotChat
-					agentId="default"
-					threadId={sessionId}
-					className="h-full rounded-none max-w-none mx-0"
-				/>
-			</div>
+		<div style={{ height, overflow: "hidden" }}>
+			<CopilotChat agentId="default" threadId={sessionId} style={{ height }} />
 		</div>
 	);
 }

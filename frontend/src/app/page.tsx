@@ -9,10 +9,16 @@ import { useStateSnapshot } from "@/hooks/useStateSnapshot";
 export default function Home() {
 	const [browserState, setBrowserState] = useState({ url: "", title: "", screenshot: undefined as string | undefined });
 	const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
-	const [currentIndex, setCurrentIndex] = useState(0);
+	const [currentIndex, setCurrentIndex] = useState<number | null>(null);
 	const { history } = useStateSnapshot();
 
-	const currentSnapshot = history[currentIndex];
+	useEffect(() => {
+		if (history.length > 0 && currentIndex === null) {
+			setCurrentIndex(history.length - 1);
+		}
+	}, [history, currentIndex]);
+
+	const currentSnapshot = history[currentIndex ?? 0];
 
 	useEffect(() => {
 		if (currentSnapshot) {
@@ -25,11 +31,11 @@ export default function Home() {
 	}, [currentSnapshot]);
 
 	const handlePrevScreenshot = () => {
-		setCurrentIndex((prev) => Math.min(prev + 1, history.length - 1));
+		setCurrentIndex((prev) => Math.max((prev ?? 0) - 1, 0));
 	};
 
 	const handleNextScreenshot = () => {
-		setCurrentIndex((prev) => Math.max(prev - 1, 0));
+		setCurrentIndex((prev) => Math.min((prev ?? 0) + 1, history.length - 1));
 	};
 
 	const handleSessionChange = (sessionId: string) => {
@@ -39,7 +45,7 @@ export default function Home() {
 	return (
 		<div className="grid grid-cols-[240px_440px_1fr] h-dvh">
 			<Sidebar currentSessionId={currentSessionId} onSessionChange={handleSessionChange} />
-			<div className="h-full border-r border-gray-200">
+			<div className="h-full min-h-0 border-r border-gray-200">
 				<ChatWindow sessionId={currentSessionId || undefined} />
 			</div>
 			<BrowserPreview

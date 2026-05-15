@@ -15,8 +15,8 @@ interface Props {
 }
 
 export function BrowserPreview({ state, currentIndex = 0, totalCount = 1, onPrev, onNext, onNavigate, onBack, onForward, onRefresh }: Props) {
-	const canGoPrev = currentIndex < totalCount - 1;
-	const canGoNext = currentIndex > 0;
+	const canGoPrev = currentIndex > 0;
+	const canGoNext = currentIndex < totalCount - 1;
 
 	return (
 		<div className="flex flex-col h-full bg-white">
