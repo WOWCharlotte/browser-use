@@ -166,40 +166,79 @@ Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
 **Files:**
 - Modify: `backend/app/services/agent_service.py`
 
+**消息结构说明：**
+
+根据 `AgentHistory` 的定义，消息内容应存储为 JSON 格式：
+
+```python
+# assistant 消息的 content 字段存储 JSON：
+{
+  "model_output": {
+    "thinking": "...",
+    "evaluation_previous_goal": "...",
+    "memory": "...",
+    "next_goal": "...",
+    "action": [...]  # ActionModel list
+  },
+  "result": [{
+    "extracted_content": "...",
+    "error": null,
+    "long_term_memory": "...",
+    "success": null,
+    "is_done": false,
+    ...
+  }]
+}
+```
+
 - [ ] **Step 1: 在 run_agent 开始时保存 user 消息**
 
 在 `run_agent` 方法中，用户消息发送时（line 316-327 的 `agent.addMessage` 之后），添加：
 
 ```python
 # 保存用户消息到数据库
+user_content = value if isinstance(value, str) else value.get("text", "")
 await session_service.add_message(
     session_id=session_id,
     role="user",
-    content=value if isinstance(value, str) else value.get("text", "")
+    content=user_content
 )
 ```
 
 具体位置在 line 329 `setInputValue("")` 之前。
 
-- [ ] **Step 2: 在 on_step_end 中保存 assistant 消息**
+- [ ] **Step 2: 在 on_step_end 中保存 assistant 消息（JSON 结构）**
 
 在 `on_step_end` 函数中（line 177-181 的 `TEXT_MESSAGE_END` 发送之后），添加：
 
 ```python
-# 保存 assistant 消息到数据库
-if parts or last_item.result:
-    content = "\n".join(parts) if parts else ""
+# 保存 assistant 消息到数据库（完整 JSON 结构）
+import json
+
+if last_item.model_output or last_item.result:
+    # 构建消息内容 JSON
+    message_data = {
+        "model_output": None,
+        "result": None
+    }
+
+    if last_item.model_output:
+        # 序列化 AgentOutput
+        model_output_dict = last_item.model_output.model_dump(exclude_none=True, mode='json')
+        message_data["model_output"] = model_output_dict
+
     if last_item.result:
-        for result in last_item.result:
-            if result.extracted_content:
-                content = result.extracted_content
-                break
-    if content:
-        await session_service.add_message(
-            session_id=session_id,
-            role="assistant",
-            content=content
-        )
+        # 序列化 ActionResult 列表
+        result_list = []
+        for r in last_item.result:
+            result_list.append(r.model_dump(exclude_none=True, mode='json'))
+        message_data["result"] = result_list
+
+    await session_service.add_message(
+        session_id=session_id,
+        role="assistant",
+        content=json.dumps(message_data, ensure_ascii=False)
+    )
 ```
 
 - [ ] **Step 3: 在 on_step_end 中保存浏览器快照**
@@ -282,7 +321,43 @@ async def connect_agent(request: Request, agentId: str) -> StreamingResponse:
         for msg in messages:
             msg_id = msg.id if hasattr(msg, 'id') else str(msg.get('id', ''))
             role = msg.role if hasattr(msg, 'role') else str(msg.get('role', 'assistant'))
-            content = msg.content if hasattr(msg, 'content') else str(msg.get('content', ''))
+            raw_content = msg.content if hasattr(msg, 'content') else str(msg.get('content', ''))
+
+            # 检查 content 是否为 JSON（assistant 消息）
+            import json
+            try:
+                content_obj = json.loads(raw_content)
+                # 如果是 JSON，提取可读内容用于展示
+                # model_output 包含 thinking、memory 等字段
+                display_content = ""
+                if isinstance(content_obj, dict):
+                    if content_obj.get("model_output"):
+                        mo = content_obj["model_output"]
+                        parts = []
+                        if mo.get("thinking"):
+                            parts.append(f"思考: {mo['thinking'][:200]}...")
+                        if mo.get("memory"):
+                            parts.append(f"记忆: {mo['memory'][:100]}...")
+                        if mo.get("evaluation_previous_goal"):
+                            parts.append(f"上一步: {mo['evaluation_previous_goal'][:100]}...")
+                        if mo.get("next_goal"):
+                            parts.append(f"下一步: {mo['next_goal'][:100]}...")
+                        display_content = "\n".join(parts) if parts else raw_content
+                    elif content_obj.get("result"):
+                        # 纯 result 无 model_output
+                        results = content_obj["result"]
+                        if results and isinstance(results, list):
+                            for r in results:
+                                if r.get("extracted_content"):
+                                    display_content = r["extracted_content"]
+                                    break
+                    else:
+                        display_content = raw_content
+                else:
+                    display_content = raw_content
+            except (json.JSONDecodeError, TypeError):
+                # 非 JSON（user 消息或其他纯文本）
+                display_content = raw_content
 
             yield encoder.encode(TextMessageStartEvent(
                 message_id=msg_id,
@@ -290,7 +365,7 @@ async def connect_agent(request: Request, agentId: str) -> StreamingResponse:
             ))
             yield encoder.encode(TextMessageContentEvent(
                 message_id=msg_id,
-                delta=content,
+                delta=display_content,
             ))
             yield encoder.encode(TextMessageEndEvent(
                 message_id=msg_id,
