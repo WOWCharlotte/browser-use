@@ -27,6 +27,7 @@ from ag_ui.core import (
     ToolCallResultEvent,
     ToolCallEndEvent,
     StateSnapshotEvent,
+    CustomEvent,
     BaseEvent,
 )
 from ag_ui.core.types import InputContent,TextInputContent
@@ -110,20 +111,23 @@ def map_agent_event_to_agui(event: dict[str, Any]) -> BaseEvent | None:
             message_id=event.get("message_id", uuid7str()),
             content=event.get("content", ""),
         )
-    elif event_type in ("INTERRUPT", "RESUME"):
-        # HITL events - use CustomEvent or skip for now
-        print(f"HITL event {event_type} - not yet supported in ag-ui-protocol SDK")
-        return None
-    elif event_type == "done":
-        # 内部完成信号，不生成 AG-UI 事件
-        return None
-    elif event_type == "heartbeat":
-        # 心跳，不生成事件
-        return None
+    elif event_type in ("PAUSE", "RESUME","STOP"):
+        return CustomEvent(
+            name=event_type.lower(),
+            value=event.get("value", {})
+        )
+    elif event_type == "DONE":
+        return CustomEvent(
+            name="done", 
+            value=event.get("value", {})
+        )
+    elif event_type == "HEARTBEAT":
+        return CustomEvent(
+            name="heartbeat", 
+            value=event.get("value", {})
+        )
     else:
-        # 未知事件类型，尝试作为原始事件返回
-        print(f"Unknown event type: {event_type}")
-        return None
+        return CustomEvent(name="unknown_event", value={"event_type": event_type})
 
 
 def extract_task(input_data: RunAgentInput) -> str:
@@ -157,7 +161,7 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
     from app.services.agent_service import agent_service
     from app.services.browser_service import browser_service
 
-    accept_header = request.headers.get("accept")
+    accept_header = request.headers.get("accept", "*/*")
     encoder = EventEncoder(accept=accept_header)
     session_id = input_data.thread_id or uuid7str()
     run_id = input_data.run_id or uuid7str()
@@ -216,8 +220,10 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
                         yield encoder.encode(agui_event)
                 except asyncio.TimeoutError:
                     # 发送心跳 - 使用原始事件格式
-                    heartbeat = {"type": "heartbeat", "run_id": run_id}
-                    yield f"data: {json.dumps(heartbeat)}\n\n"
+                    heartbeat_event = {"type": "HEARTBEAT", "value": {"run_id": run_id}}
+                    agui_event = map_agent_event_to_agui(heartbeat_event)
+                    if agui_event is not None:
+                        yield encoder.encode(agui_event)
                     continue
 
             # 处理剩余事件
