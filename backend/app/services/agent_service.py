@@ -137,6 +137,7 @@ class AgentService:
 		message: str,
 		on_event: Callable[[dict[str, Any]], Awaitable[None]],
 		max_steps: int = 100,
+		output_dir: str = "task",
 	) -> None:
 		"""Run agent with AG-UI compatible event callbacks.
 
@@ -155,8 +156,7 @@ class AgentService:
 			nonlocal step_count, message_id
 			step_count = agent_instance.state.n_steps
 			message_id = str(uuid.uuid4())
-			await on_event({"type": EVENT_STEP_STARTED, "step_name": f"Step {step_count}"})
-
+		
 			if self._paused.get(session_id, False):
 				self._resume_events[session_id].clear()
 				await on_event({
@@ -191,8 +191,7 @@ class AgentService:
 				})
 
 			await on_event({"type": EVENT_TEXT_MESSAGE_END, "message_id": message_id})
-			await on_event({"type": EVENT_STEP_FINISHED, "step_name": f"Step {step_count}"})
-
+			
 			state = last_item.state
 			snapshot_state = self._build_snapshot_state(state, self._history[session_id])
 			self._history[session_id].append(snapshot_state)
@@ -235,7 +234,9 @@ class AgentService:
 				"code": "500",
 			})
 		finally:
-			await on_event({"type": "DONE", "step": step_count})
+			if agent:
+				agent.save_history(f"{output_dir}/{session_id}.json")
+			await on_event({"type": "DONE", "value": {"step": step_count}})
 
 	def pause_agent(self, session_id: str) -> None:
 		"""Pause agent at next step boundary."""
