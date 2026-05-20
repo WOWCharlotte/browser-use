@@ -36,7 +36,7 @@ EVENT_STATE_SNAPSHOT = "STATE_SNAPSHOT"
 EVENT_STATE_DELTA = "STATE_DELTA"
 
 # HITL 中断事件
-EVENT_INTERRUPT = "INTERRUPT"
+EVENT_PAUSE = "PAUSE"
 EVENT_RESUME = "RESUME"
 
 
@@ -155,24 +155,22 @@ class AgentService:
 			nonlocal step_count, message_id
 			step_count = agent_instance.state.n_steps
 			message_id = str(uuid.uuid4())
+			await on_event({"type": EVENT_STEP_STARTED, "step_name": f"Step {step_count}"})
+
+			if self._paused.get(session_id, False):
+				self._resume_events[session_id].clear()
+				await on_event({
+					"type": EVENT_PAUSE,
+					"value": {"interrupt_id": str(uuid.uuid4()), "reason": "awaiting_user", "step": step_count},
+				})
+				await self._resume_events[session_id].wait()
+				await on_event({"type": EVENT_RESUME, "value": {"step": step_count}})
+
 			await on_event({
 				"type": EVENT_TEXT_MESSAGE_START,
 				"message_id": message_id,
 				"role": "assistant",
 			})
-
-			if self._paused.get(session_id, False):
-				self._resume_events[session_id].clear()
-				await on_event({
-					"type": EVENT_INTERRUPT,
-					"interrupt_id": str(uuid.uuid4()),
-					"reason": "awaiting_user",
-					"step": step_count,
-				})
-				await self._resume_events[session_id].wait()
-				await on_event({"type": EVENT_RESUME, "step": step_count})
-
-			await on_event({"type": EVENT_STEP_STARTED, "step_name": f"Step {step_count}"})
 
 		async def on_step_end(agent_instance: Agent) -> None:
 			"""Callback called after each step - emit STEP_FINISHED and content events."""

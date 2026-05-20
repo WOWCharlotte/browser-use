@@ -117,6 +117,10 @@ def map_agent_event_to_agui(event: dict[str, Any]) -> BaseEvent | None:
             value=event.get("value", {})
         )
     elif event_type == "DONE":
+        return CustomEvent(name="done", value=event.get("value", {}))
+    elif event_type == "HEARTBEAT":
+        return CustomEvent(name="heartbeat", value=event.get("value", {}))
+    elif event_type == "DONE":
         return CustomEvent(
             name="done", 
             value=event.get("value", {})
