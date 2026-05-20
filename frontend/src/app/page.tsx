@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { ChatWindow } from "@/components/chat/ChatWindow";
+import { AgentControlBar } from "@/components/chat/AgentControlBar";
 import { BrowserPreview } from "@/components/browser/BrowserPreview";
 import { Sidebar } from "@/components/sidebar/Sidebar";
 import { useStateSnapshot } from "@/hooks/useStateSnapshot";
@@ -112,12 +113,13 @@ export default function Home() {
 	return (
 		<div className="grid grid-cols-[240px_440px_1fr] h-dvh">
 			<Sidebar currentSessionId={currentSessionId} onSessionChange={handleSessionChange} />
-			<div className="h-full min-h-0 border-r border-gray-200">
+			<div className="h-full min-h-0 border-r border-gray-200 flex flex-col">
+				{currentSessionId && <AgentControlBar sessionId={currentSessionId} />}
 				<ChatWindow sessionId={currentSessionId || undefined} />
 			</div>
 			<BrowserPreview
 				state={browserState}
-				currentIndex={currentIndex}
+				currentIndex={currentIndex ?? undefined}
 				totalCount={combinedHistory.length}
 				onPrev={handlePrevScreenshot}
 				onNext={handleNextScreenshot}
