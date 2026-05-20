@@ -210,6 +210,49 @@ class AgentService:
 
 			self._history[session_id].append(snapshot_state)
 
+			try:
+				# Accumulate assistant message for this step and save to DB
+				step_content_parts = []
+				if last_item.model_output:
+					output = last_item.model_output
+					parts: list[str] = []
+					if output.thinking:
+						parts.append(f"思考: {output.thinking}")
+					if output.memory:
+						parts.append(f"记忆: {output.memory}")
+					if output.evaluation_previous_goal:
+						parts.append(f"上一步评估: {output.evaluation_previous_goal}")
+					if output.next_goal:
+						parts.append(f"下一步目标: {output.next_goal}")
+					if output.plan_update:
+						parts.append(f"计划更新: {' -> '.join(output.plan_update)}")
+					if parts:
+						step_content_parts.append("\n".join(parts))
+
+				if last_item.result:
+					for result in last_item.result:
+						if result.error:
+							step_content_parts.append(f"Error: {result.error}")
+						if result.long_term_memory:
+							step_content_parts.append(f"长期记忆: {result.long_term_memory}")
+						elif result.extracted_content:
+							step_content_parts.append(result.extracted_content)
+
+				from app.services.session_service import session_service
+				if step_content_parts:
+					step_content = "\n\n".join(step_content_parts)
+					await session_service.add_message(session_id, "assistant", step_content)
+
+				# Save browser state to DB
+				await session_service.add_browser_state(
+					session_id=session_id,
+					url=state.url,
+					title=state.title,
+					screenshot=state.get_screenshot()
+				)
+			except Exception as e:
+				print(f"Error persisting step data: {e}")
+
 			await on_event({
 				"type": EVENT_STATE_SNAPSHOT,
 				"state": snapshot_state,
@@ -241,6 +284,11 @@ class AgentService:
 						"type": EVENT_TEXT_MESSAGE_END,
 						"message_id": final_message_id,
 					})
+					try:
+						from app.services.session_service import session_service
+						await session_service.add_message(session_id, "assistant", str(final_result))
+					except Exception as e:
+						print(f"Error persisting final result: {e}")
 
 		except Exception as e:
 			await on_event({

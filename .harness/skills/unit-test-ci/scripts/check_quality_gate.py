@@ -28,11 +28,11 @@ def check_outputs(change_dir: str) -> bool:
     print(f"OK: Latest CI result: {latest.name}")
 
     # Read and validate content
-    content = latest.read_text()
+    content = latest.read_text(encoding="utf-8")
     if "status" not in content.lower():
         print("WARNING: CI result may not contain status information")
 
-    print("\n✓ All required output files present")
+    print("\n[SUCCESS] All required output files present")
     return True
 
 
@@ -43,7 +43,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     change_id = sys.argv[1]
-    base_dir = Path(__file__).parent.parent.parent / "changes" / change_id
+    base_dir = Path(__file__).parent.parent.parent.parent / "changes" / change_id
 
     success = check_outputs(base_dir)
     sys.exit(0 if success else 1)

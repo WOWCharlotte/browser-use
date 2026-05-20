@@ -7,6 +7,8 @@
 "use client";
 import React, { useState, useEffect } from "react";
 import { CopilotChat } from "@copilotkit/react-core/v2";
+import { useAgent } from "@copilotkit/react-core/v2";
+import { getMessages } from "@/lib/api";
 
 interface Props {
 	sessionId?: string;
@@ -14,6 +16,7 @@ interface Props {
 
 export function ChatWindow({ sessionId }: Props) {
 	const [height, setHeight] = useState(0);
+	const { agent } = useAgent({ agentId: "default" });
 
 	useEffect(() => {
 		const updateHeight = () => setHeight(window.innerHeight);
@@ -21,6 +24,23 @@ export function ChatWindow({ sessionId }: Props) {
 		window.addEventListener("resize", updateHeight);
 		return () => window.removeEventListener("resize", updateHeight);
 	}, []);
+
+	useEffect(() => {
+		if (!sessionId || !agent) return;
+
+		getMessages(sessionId)
+			.then((msgs) => {
+				const copilotMsgs = msgs.map((m) => ({
+					id: m.id,
+					role: (m.role === "assistant" || (m.role as string) === "ai" ? "assistant" : "user") as "assistant" | "user",
+					content: m.content,
+				}));
+				agent.setMessages(copilotMsgs);
+			})
+			.catch((err) => {
+				console.error("Failed to load historical messages:", err);
+			});
+	}, [sessionId, agent]);
 
 	return (
 		<div style={{ height, overflow: "hidden" }}>

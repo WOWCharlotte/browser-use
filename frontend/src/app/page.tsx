@@ -5,27 +5,94 @@ import { ChatWindow } from "@/components/chat/ChatWindow";
 import { BrowserPreview } from "@/components/browser/BrowserPreview";
 import { Sidebar } from "@/components/sidebar/Sidebar";
 import { useStateSnapshot } from "@/hooks/useStateSnapshot";
+import { fetchBrowserStates } from "@/lib/api";
+import { BrowserState } from "@/types";
 
 export default function Home() {
 	const [browserState, setBrowserState] = useState({ url: "", title: "", screenshot: undefined as string | undefined });
 	const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 	const [currentIndex, setCurrentIndex] = useState<number | null>(null);
+	const [combinedHistory, setCombinedHistory] = useState<BrowserState[]>([]);
 	const { history } = useStateSnapshot();
 
+	// 1. Load historical browser states from SQLite when session changes
 	useEffect(() => {
-		if (history.length > 0 && currentIndex === null) {
-			setCurrentIndex(history.length - 1);
+		if (!currentSessionId) {
+			setCombinedHistory([]);
+			setCurrentIndex(null);
+			return;
 		}
-	}, [history, currentIndex]);
 
-	const currentSnapshot = history[currentIndex ?? 0];
+		// Clear instantly on switch to avoid showing flash of previous session
+		setCombinedHistory([]);
+		setCurrentIndex(null);
+
+		fetchBrowserStates(currentSessionId)
+			.then((states) => {
+				setCombinedHistory(states);
+				if (states.length > 0) {
+					setCurrentIndex(states.length - 1);
+				}
+			})
+			.catch((err) => {
+				console.error("Failed to load historical browser states:", err);
+			});
+	}, [currentSessionId]);
+
+	// 2. Merge live snapshots generated during active execution
+	useEffect(() => {
+		if (history.length === 0) return;
+
+		setCombinedHistory((prev) => {
+			const updated = [...prev];
+			let changed = false;
+
+			for (const liveItem of history) {
+				const liveUrl = (liveItem.url as string) || "";
+				const liveTitle = (liveItem.title as string) || "";
+				const liveScreenshot = liveItem.screenshot as string | undefined;
+
+				// De-duplicate: check if this snapshot is already in combined history
+				const exists = updated.some(
+					(item) =>
+						item.url === liveUrl &&
+						item.title === liveTitle &&
+						item.screenshot === liveScreenshot
+				);
+
+				if (!exists) {
+					updated.push({
+						url: liveUrl,
+						title: liveTitle,
+						screenshot: liveScreenshot,
+					});
+					changed = true;
+				}
+			}
+
+			if (changed) {
+				setCurrentIndex(updated.length - 1);
+				return updated;
+			}
+			return prev;
+		});
+	}, [history]);
+
+	const currentSnapshot = combinedHistory[currentIndex ?? 0];
 
 	useEffect(() => {
 		if (currentSnapshot) {
 			setBrowserState({
-				url: (currentSnapshot.url as string) || "",
-				title: (currentSnapshot.title as string) || "",
-				screenshot: (currentSnapshot.screenshot as string | undefined) || undefined,
+				url: currentSnapshot.url || "",
+				title: currentSnapshot.title || "",
+				screenshot: currentSnapshot.screenshot || undefined,
+			});
+		} else {
+			// Clear preview if no snapshots exist
+			setBrowserState({
+				url: "",
+				title: "",
+				screenshot: undefined,
 			});
 		}
 	}, [currentSnapshot]);
@@ -35,7 +102,7 @@ export default function Home() {
 	};
 
 	const handleNextScreenshot = () => {
-		setCurrentIndex((prev) => Math.min((prev ?? 0) + 1, history.length - 1));
+		setCurrentIndex((prev) => Math.min((prev ?? 0) + 1, combinedHistory.length - 1));
 	};
 
 	const handleSessionChange = (sessionId: string) => {
@@ -51,7 +118,7 @@ export default function Home() {
 			<BrowserPreview
 				state={browserState}
 				currentIndex={currentIndex}
-				totalCount={history.length}
+				totalCount={combinedHistory.length}
 				onPrev={handlePrevScreenshot}
 				onNext={handleNextScreenshot}
 			/>

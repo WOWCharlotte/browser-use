@@ -163,6 +163,20 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
     run_id = input_data.run_id or uuid7str()
     user_message = extract_task(input_data)
 
+    # Ensure session and user message are persisted in DB
+    from app.services.session_service import session_service
+    session = await session_service.get_session(session_id)
+    if not session:
+        await session_service.create_session(title=user_message[:30] or "Conversation", session_id=session_id)
+    else:
+        if session.title == "New conversation" and user_message:
+            await session_service.update_session(session_id, user_message[:30])
+
+    if user_message:
+        existing_msgs = await session_service.get_messages(session_id)
+        if not any(m.role == "user" and m.content == user_message for m in existing_msgs):
+            await session_service.add_message(session_id, "user", user_message)
+
     async def event_generator() -> AsyncGenerator[str, None]:
         # 发送 RUN_STARTED
         run_started_event = RunStartedEvent(

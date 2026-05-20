@@ -198,3 +198,12 @@ export async function getAgentStatus(sessionId: string): Promise<string> {
 	}
 	return (await res.json()).status as string;
 }
+
+export async function fetchBrowserStates(sessionId: string): Promise<BrowserState[]> {
+	const res = await fetch(`${API_BASE}/sessions/${sessionId}/browser_states`);
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ detail: "Unknown error" }));
+		throw new Error(error.detail || `HTTP ${res.status}`);
+	}
+	return res.json();
+}

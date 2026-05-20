@@ -52,3 +52,8 @@ async def delete_session(session_id: str):
 @router.get("/sessions/{session_id}/messages")
 async def get_messages(session_id: str):
 	return await session_service.get_messages(session_id)
+
+
+@router.get("/sessions/{session_id}/browser_states")
+async def get_browser_states(session_id: str):
+	return await session_service.get_browser_states(session_id)

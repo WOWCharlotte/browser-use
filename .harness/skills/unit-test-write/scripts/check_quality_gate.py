@@ -33,7 +33,7 @@ def check_outputs(change_dir: str) -> bool:
         if reviews:
             print(f"OK: Latest test review: {max(reviews).name}")
 
-    print("\n✓ All required output files present")
+    print("\n[SUCCESS] All required output files present")
     return True
 
 
@@ -44,7 +44,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     change_id = sys.argv[1]
-    base_dir = Path(__file__).parent.parent.parent / "changes" / change_id
+    base_dir = Path(__file__).parent.parent.parent.parent / "changes" / change_id
 
     success = check_outputs(base_dir)
     sys.exit(0 if success else 1)

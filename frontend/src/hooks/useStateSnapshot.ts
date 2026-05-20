@@ -69,6 +69,12 @@ export function useStateSnapshot(
     return unsubscribe;
   }, [agent]);
 
+  useEffect(() => {
+    setHistory([]);
+    setIsLoading(true);
+    hasSnapshot.current = false;
+  }, [agent]);
+
   return {
     snapshot: history[history.length - 1] ?? undefined,
     isLoading: isLoading && !hasSnapshot.current,

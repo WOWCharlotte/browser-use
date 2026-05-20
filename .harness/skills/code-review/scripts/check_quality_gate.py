@@ -33,12 +33,12 @@ def check_outputs(change_dir: str) -> bool:
     print(f"OK: Latest code review: {latest.name}")
 
     # Read content and check for quality gate status
-    content = latest.read_text()
+    content = latest.read_text(encoding="utf-8")
     if "MUST FIX" in content:
         must_fix_count = content.count("MUST FIX")
         print(f"WARNING: Found {must_fix_count} MUST FIX items - blocking issues must be resolved")
 
-    print("\n✓ Code review completed")
+    print("\n[SUCCESS] Code review completed")
     return True
 
 
@@ -49,7 +49,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     change_id = sys.argv[1]
-    base_dir = Path(__file__).parent.parent.parent / "changes" / change_id
+    base_dir = Path(__file__).parent.parent.parent.parent / "changes" / change_id
 
     success = check_outputs(base_dir)
     sys.exit(0 if success else 1)
