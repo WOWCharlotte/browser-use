@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 # Load .env file
@@ -15,3 +16,7 @@ class Config:
 		"LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
 	)
 	LLM_MODEL: str = os.getenv("LLM_MODEL", "qwen-vl-max")
+	TRAJECTORY_DIR: Path = PROJECT_ROOT / "data" / "trajectories"
+	MAX_CONCURRENCY: int = int(os.getenv("MAX_CONCURRENCY", "5"))
+	CASE_TIMEOUT_SECONDS: int = int(os.getenv("CASE_TIMEOUT_SECONDS", "600"))
+	TRAJECTORY_RETENTION_DAYS: int = 30
