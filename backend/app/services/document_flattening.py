@@ -8,7 +8,6 @@ into a standardized Markdown string for LLM processing.
 import io
 import logging
 from abc import ABC, abstractmethod
-from typing import Literal
 
 import pandas as pd
 

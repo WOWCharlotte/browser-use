@@ -1,5 +1,5 @@
-import uuid
 import time
+import uuid
 
 
 def uuid7str() -> str:

@@ -5,34 +5,33 @@ AG-UI Protocol HTTP Agent Endpoint
 支持 SSE 流式输出事件。
 """
 import asyncio
-import json
-from typing import Any, AsyncGenerator,List
+from typing import Any, AsyncGenerator
 
+from ag_ui.core import (
+    BaseEvent,
+    CustomEvent,
+    RunAgentInput,
+    RunErrorEvent,
+    RunFinishedEvent,
+    RunStartedEvent,
+    StateSnapshotEvent,
+    StepFinishedEvent,
+    StepStartedEvent,
+    TextMessageContentEvent,
+    TextMessageEndEvent,
+    TextMessageStartEvent,
+    ToolCallArgsEvent,
+    ToolCallEndEvent,
+    ToolCallResultEvent,
+    ToolCallStartEvent,
+)
+from ag_ui.core.types import TextInputContent
+from ag_ui.encoder import EventEncoder
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
-from ag_ui.core import (
-    EventType,
-    RunAgentInput,
-    RunStartedEvent,
-    RunFinishedEvent,
-    RunErrorEvent,
-    StepStartedEvent,
-    StepFinishedEvent,
-    TextMessageStartEvent,
-    TextMessageContentEvent,
-    TextMessageEndEvent,
-    ToolCallStartEvent,
-    ToolCallArgsEvent,
-    ToolCallResultEvent,
-    ToolCallEndEvent,
-    StateSnapshotEvent,
-    CustomEvent,
-    BaseEvent,
-)
-from ag_ui.core.types import InputContent,TextInputContent
-from ag_ui.encoder import EventEncoder
 from app.utils import uuid7str
+
 # Note: InterruptEvent and ResumeEvent are not in ag_ui.core yet
 # Using CustomEvent or raw event fallback for HITL if needed
 

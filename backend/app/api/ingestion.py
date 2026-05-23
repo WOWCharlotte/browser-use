@@ -6,9 +6,9 @@ Provides endpoints for parsing test cases from Excel/Markdown documents.
 
 import logging
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
-from app.models.ingestion import IngestionResponse, IngestionErrorResponse
+from app.models.ingestion import IngestionResponse
 from app.services.ingestion_service import ingestion_service
 
 logger = logging.getLogger(__name__)
