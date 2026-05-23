@@ -28,9 +28,10 @@ async def startup():
 
 
 # Import routers after app creation to avoid circular imports
-from app.api import sessions, agent, agui, ingestion
+from app.api import agent, agui, ingestion, sessions, test_plans
 
 app.include_router(sessions.router, prefix="/api", tags=["sessions"])
 app.include_router(agent.router, prefix="/api", tags=["agent"])
 app.include_router(agui.router, prefix="/api", tags=["agui"])
 app.include_router(ingestion.router, prefix="/api", tags=["ingestion"])
+app.include_router(test_plans.router, prefix="/api", tags=["test-plans"])
