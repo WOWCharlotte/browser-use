@@ -6,39 +6,33 @@ AG-UI 协议集成单元测试
 2. 任务提取函数 extract_task
 3. AG-UI 端点功能测试
 """
-import asyncio
-import json
-import uuid
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 # 添加 backend 目录到 sys.path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.api.agui import map_agent_event_to_agui, extract_task, router
-
 from ag_ui.core import (
     RunAgentInput,
-    TextMessageStartEvent,
+    RunErrorEvent,
+    RunFinishedEvent,
+    RunStartedEvent,
+    StateSnapshotEvent,
+    StepFinishedEvent,
+    StepStartedEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
-    RunStartedEvent,
-    RunFinishedEvent,
-    RunErrorEvent,
-    StepStartedEvent,
-    StepFinishedEvent,
-    StateSnapshotEvent,
-    ToolCallStartEvent,
+    TextMessageStartEvent,
     ToolCallArgsEvent,
     ToolCallEndEvent,
     ToolCallResultEvent,
+    ToolCallStartEvent,
 )
-from ag_ui.core.types import UserMessage, TextInputContent
+from ag_ui.core.types import TextInputContent, UserMessage
 from ag_ui.encoder import EventEncoder
-
+from app.api.agui import extract_task, map_agent_event_to_agui, router
 
 # ============================================================================
 # 测试事件映射函数

@@ -7,15 +7,13 @@ These tests are designed to run in the backend environment where pandas is avail
 from unittest.mock import AsyncMock
 
 import pytest
-from pydantic import ValidationError
-
 from app.models.ingestion import (
 	IngestionRequest,
 	IngestionResponse,
 	TestCaseSchema,
 	TestStepSchema,
 )
-
+from pydantic import ValidationError
 
 # ============================================================================
 # Pydantic Model Tests
@@ -280,6 +278,7 @@ class TestIngestionServiceIntegration:
 	async def test_parse_markdown_success(self, mock_llm):
 		"""Test successful markdown parsing with mocked LLM."""
 		from app.services.ingestion_service import IngestionService
+
 		from browser_use.llm.views import ChatInvokeCompletion
 
 		mock_response = TestCaseSchema(
@@ -313,6 +312,7 @@ class TestIngestionServiceIntegration:
 	async def test_parse_markdown_no_variables(self, mock_llm):
 		"""Test parsing markdown with no variables."""
 		from app.services.ingestion_service import IngestionService
+
 		from browser_use.llm.views import ChatInvokeCompletion
 
 		mock_response = TestCaseSchema(

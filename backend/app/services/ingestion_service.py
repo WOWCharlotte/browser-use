@@ -7,10 +7,9 @@ extracting steps, actions, expected results, and dynamic variables.
 
 import logging
 import re
-from typing import Any
 
 from app.config import Config
-from app.models.ingestion import TestCaseSchema, TestStepSchema
+from app.models.ingestion import TestCaseSchema
 from app.services.document_flattening import document_flattener
 from browser_use.llm.messages import SystemMessage, UserMessage
 from browser_use.llm.openai.chat import ChatOpenAI
@@ -89,7 +88,7 @@ class IngestionService:
 		# Check for unclosed placeholders (text with { but no proper closing })
 		# Pattern: { followed by any non-} characters, then end of string
 		if re.search(r"\{[^}]*$", text):
-			errors.append(f"Unclosed placeholder detected")
+			errors.append("Unclosed placeholder detected")
 
 		# Check for empty braces {}
 		if re.search(r"\{\}", text):
