@@ -247,6 +247,18 @@ export async function uploadTestPlan(
 	return _checkOk(res) as Promise<TestPlanDetailView>;
 }
 
+export async function createTestCase(
+	planId: string,
+	data: { case_name: string; start_url: string; steps: Array<{ step_number: number; action_description: string; expected_result: string | null; step_variables: string[]; is_visual_checkpoint: boolean }>; description?: string | null; module?: string | null; function_point?: string | null; global_variables?: string[]; variable_values?: Record<string, string>; execution_order?: number | null },
+): Promise<TestCaseView> {
+	const res = await fetch(`${API_BASE}/test-plans/${planId}/cases`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(data),
+	});
+	return _checkOk(res) as Promise<TestCaseView>;
+}
+
 export async function confirmTestPlan(planId: string): Promise<TestPlanDetailView> {
 	const res = await fetch(`${API_BASE}/test-plans/${planId}/confirm`, { method: "PUT" });
 	return _checkOk(res) as Promise<TestPlanDetailView>;
