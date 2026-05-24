@@ -16,8 +16,14 @@ interface Props {
   plan: TestPlanDetailView;
   sessionId: string;
   onConfirm: () => void;
+  onCancel: () => void;
   onPlanUpdate: (plan: TestPlanDetailView) => void;
 }
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const VAR_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+const VAR_NAME_MAX = 30;
 
 // ── Validation helpers ────────────────────────────────────────────────────────
 
@@ -35,20 +41,60 @@ function stepsVars(c: TestCaseView): Set<string> {
 }
 
 interface CaseError {
+  emptyName?: boolean;
+  emptyUrl?: boolean;
+  invalidUrl?: boolean;
   missingVarSets: boolean;
   missingVars: string[];
   extraVars: string[];
+  emptyVarValues: string[];  // variable names that have empty values in saved sets
 }
 
 function validateCase(c: TestCaseView, savedSets: VariableSetView[], varCols: string[]): CaseError | null {
   const required = stepsVars(c);
   const cols = new Set(varCols);
-  if (required.size === 0 && cols.size === 0) return null;
+  const emptyName = !c.case_name.trim();
+  const emptyUrl = !c.start_url.trim();
+  const invalidUrl = !emptyUrl && !/^https?:\/\/.+/.test(c.start_url.trim());
   const missingVarSets = cols.size > 0 && savedSets.length === 0;
   const missingVars = [...required].filter((v) => !cols.has(v));
   const extraVars = [...cols].filter((v) => !required.has(v));
-  if (!missingVarSets && missingVars.length === 0 && extraVars.length === 0) return null;
-  return { missingVarSets, missingVars, extraVars };
+
+  // Check for empty values in saved variable sets
+  const emptyVarValues: string[] = [];
+  if (savedSets.length > 0) {
+    for (const col of varCols) {
+      const hasEmpty = savedSets.some((vs) => !(vs.variables[col] ?? "").trim());
+      if (hasEmpty) emptyVarValues.push(col);
+    }
+  }
+
+  if (!emptyName && !emptyUrl && !invalidUrl && !missingVarSets && missingVars.length === 0 && extraVars.length === 0 && emptyVarValues.length === 0) return null;
+  return { emptyName, emptyUrl, invalidUrl, missingVarSets, missingVars, extraVars, emptyVarValues };
+}
+
+function validateVarName(name: string): string | null {
+  if (!name.trim()) return "变量名不能为空";
+  if (!VAR_NAME_RE.test(name)) return "变量名只能包含英文字母、数字和下划线，且不能以数字开头";
+  if (name.length > VAR_NAME_MAX) return `变量名长度不能超过 ${VAR_NAME_MAX} 个字符`;
+  return null;
+}
+
+// ── Highlight {vars} in text ──────────────────────────────────────────────────
+
+function HighlightedText({ text }: { text: string }) {
+  const parts = text.split(/(\{[a-zA-Z_][a-zA-Z0-9_]*\})/g);
+  return (
+    <>
+      {parts.map((part, i) =>
+        /^\{[a-zA-Z_][a-zA-Z0-9_]*\}$/.test(part) ? (
+          <span key={i} className="text-blue-600 font-medium">{part}</span>
+        ) : (
+          <span key={i}>{part}</span>
+        ),
+      )}
+    </>
+  );
 }
 
 // ── Debounced save hook ───────────────────────────────────────────────────────
@@ -71,12 +117,7 @@ function useDebouncedSave(plan: TestPlanDetailView, onPlanUpdate: (p: TestPlanDe
         try {
           const updated = await updateTestCase(caseId, patch);
           if (ctrl.signal.aborted) return;
-          onPlanUpdate({
-            ...plan,
-            cases: plan.cases.map((c) =>
-              c.id === caseId ? { ...c, ...updated } : c,
-            ),
-          });
+          onPlanUpdate({ ...plan, cases: plan.cases.map((c) => (c.id === caseId ? { ...c, ...updated } : c)) });
         } catch (e) {
           if (ctrl.signal.aborted) return;
           setSaveError(`保存失败: ${e instanceof Error ? e.message : String(e)}`);
@@ -100,25 +141,31 @@ function useDebouncedSave(plan: TestPlanDetailView, onPlanUpdate: (p: TestPlanDe
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function TestCaseEditor({ plan, sessionId, onConfirm, onPlanUpdate }: Props) {
+export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpdate }: Props) {
   const [selectedCaseId, setSelectedCaseId] = useState<string>(plan.cases[0]?.id ?? "");
   const [variableSets, setVariableSets] = useState<Record<string, VariableSetView[]>>({});
   const [deletingCaseId, setDeletingCaseId] = useState<string | null>(null);
   const [deletingVsId, setDeletingVsId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [savingVars, setSavingVars] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadingVars, setLoadingVars] = useState<string | null>(null);
   const [pendingVarRows, setPendingVarRows] = useState<Record<string, Array<Record<string, string>>>>({});
+  // customVarCols: for cases where LLM found no variables
   const [customVarCols, setCustomVarCols] = useState<Record<string, string[]>>({});
   const [newColName, setNewColName] = useState<Record<string, string>>({});
+  const [newColError, setNewColError] = useState<string | null>(null);
+  // editingColIdx: {caseId, colIndex} for renaming a column
+  const [editingCol, setEditingCol] = useState<{ caseId: string; idx: number; value: string } | null>(null);
+  const [editColError, setEditColError] = useState<string | null>(null);
   const [invalidCaseIds, setInvalidCaseIds] = useState<Set<string>>(new Set());
-  // drag-and-drop step reorder state
   const dragStepIdx = useRef<number | null>(null);
 
   const { save, cancel, savingCaseId, saveError, setSaveError } = useDebouncedSave(plan, onPlanUpdate);
 
   const selectedCase = plan.cases.find((c) => c.id === selectedCaseId) ?? plan.cases[0];
+
   const getVarCols = (c: TestCaseView): string[] =>
     c.global_variables.length > 0 ? c.global_variables : (customVarCols[c.id] ?? []);
 
@@ -141,17 +188,14 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onPlanUpdate }: Pro
     loadVariableSets(caseId);
   };
 
-  // ── case meta editing ──────────────────────────────────────────────────────
+  // ── case meta ─────────────────────────────────────────────────────────────
 
   const handleMetaChange = (
     caseId: string,
     field: "case_name" | "start_url" | "module" | "function_point",
     value: string,
   ) => {
-    onPlanUpdate({
-      ...plan,
-      cases: plan.cases.map((c) => (c.id === caseId ? { ...c, [field]: value } : c)),
-    });
+    onPlanUpdate({ ...plan, cases: plan.cases.map((c) => (c.id === caseId ? { ...c, [field]: value } : c)) });
     save(caseId, { [field]: value });
   };
 
@@ -173,94 +217,114 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onPlanUpdate }: Pro
     }
   };
 
-  // ── step CRUD ──────────────────────────────────────────────────────────────
+  // ── steps ─────────────────────────────────────────────────────────────────
 
-  const applySteps = (caseId: string, updatedSteps: TestStepView[]) => {
-    // Renumber steps sequentially
-    const renumbered = updatedSteps.map((s, i) => ({ ...s, step_number: i + 1 }));
-    onPlanUpdate({
-      ...plan,
-      cases: plan.cases.map((c) => (c.id === caseId ? { ...c, steps: renumbered } : c)),
-    });
+  const applySteps = (caseId: string, steps: TestStepView[]) => {
+    const renumbered = steps.map((s, i) => ({ ...s, step_number: i + 1 }));
+    onPlanUpdate({ ...plan, cases: plan.cases.map((c) => (c.id === caseId ? { ...c, steps: renumbered } : c)) });
     save(caseId, { steps: renumbered });
   };
 
-  const handleStepChange = (
-    caseId: string,
-    stepIndex: number,
-    field: keyof TestStepView,
-    value: string | boolean,
-  ) => {
+  const handleStepChange = (caseId: string, idx: number, field: keyof TestStepView, value: string | boolean) => {
     const c = plan.cases.find((x) => x.id === caseId);
     if (!c) return;
-    applySteps(caseId, c.steps.map((s, i) => (i === stepIndex ? { ...s, [field]: value } : s)));
+    applySteps(caseId, c.steps.map((s, i) => (i === idx ? { ...s, [field]: value } : s)));
   };
 
   const handleAddStep = (caseId: string) => {
     const c = plan.cases.find((x) => x.id === caseId);
     if (!c) return;
-    const newStep: TestStepView = {
-      step_number: c.steps.length + 1,
-      action_description: "",
-      expected_result: null,
-      step_variables: [],
-      is_visual_checkpoint: false,
-    };
-    applySteps(caseId, [...c.steps, newStep]);
+    applySteps(caseId, [...c.steps, { step_number: c.steps.length + 1, action_description: "", expected_result: null, step_variables: [], is_visual_checkpoint: false }]);
   };
 
-  const handleDeleteStep = (caseId: string, stepIndex: number) => {
+  const handleDeleteStep = (caseId: string, idx: number) => {
     const c = plan.cases.find((x) => x.id === caseId);
     if (!c) return;
-    applySteps(caseId, c.steps.filter((_, i) => i !== stepIndex));
+    applySteps(caseId, c.steps.filter((_, i) => i !== idx));
   };
 
-  // ── step drag-and-drop reorder ─────────────────────────────────────────────
-
   const handleDragStart = (idx: number) => { dragStepIdx.current = idx; };
-
   const handleDragOver = (e: React.DragEvent, idx: number) => {
     e.preventDefault();
-    if (dragStepIdx.current === null || dragStepIdx.current === idx) return;
-    if (!selectedCase) return;
+    if (dragStepIdx.current === null || dragStepIdx.current === idx || !selectedCase) return;
     const steps = [...selectedCase.steps];
     const [moved] = steps.splice(dragStepIdx.current, 1);
     steps.splice(idx, 0, moved);
     dragStepIdx.current = idx;
     applySteps(selectedCase.id, steps);
   };
-
   const handleDragEnd = () => { dragStepIdx.current = null; };
 
-  // ── variable set CRUD ──────────────────────────────────────────────────────
+  // ── variable columns ───────────────────────────────────────────────────────
+
+  const handleAddCustomCol = (caseId: string) => {
+    const name = (newColName[caseId] ?? "").trim();
+    const err = validateVarName(name);
+    if (err) { setNewColError(err); return; }
+    const existing = getVarCols(plan.cases.find((c) => c.id === caseId)!);
+    if (existing.includes(name)) { setNewColError("变量名已存在"); return; }
+    setNewColError(null);
+    setCustomVarCols((prev) => ({ ...prev, [caseId]: [...(prev[caseId] ?? []), name] }));
+    setNewColName((prev) => ({ ...prev, [caseId]: "" }));
+    setPendingVarRows((prev) => ({ ...prev, [caseId]: (prev[caseId] ?? []).map((row) => ({ ...row, [name]: "" })) }));
+  };
+
+  const handleStartEditCol = (caseId: string, idx: number, currentName: string) => {
+    setEditingCol({ caseId, idx, value: currentName });
+    setEditColError(null);
+  };
+
+  const handleCommitEditCol = () => {
+    if (!editingCol) return;
+    const { caseId, idx, value } = editingCol;
+    const newName = value.trim();
+    const err = validateVarName(newName);
+    if (err) { setEditColError(err); return; }
+    const cols = [...(customVarCols[caseId] ?? [])];
+    const oldName = cols[idx];
+    if (newName === oldName) { setEditingCol(null); return; }
+    if (cols.includes(newName)) { setEditColError("变量名已存在"); return; }
+    cols[idx] = newName;
+    setCustomVarCols((prev) => ({ ...prev, [caseId]: cols }));
+    // Rename key in pending rows
+    setPendingVarRows((prev) => ({
+      ...prev,
+      [caseId]: (prev[caseId] ?? []).map((row) => {
+        const { [oldName]: val, ...rest } = row;
+        return { ...rest, [newName]: val ?? "" };
+      }),
+    }));
+    setEditingCol(null);
+    setEditColError(null);
+  };
+
+  // ── variable set rows ──────────────────────────────────────────────────────
 
   const currentVarSets = selectedCase ? (variableSets[selectedCase.id] ?? []) : [];
   const varCols = selectedCase ? getVarCols(selectedCase) : [];
 
   const handleAddVarRow = () => {
-    if (!selectedCase) return;
-    const cols = getVarCols(selectedCase);
-    if (cols.length === 0) return;
+    if (!selectedCase || varCols.length === 0) return;
     setPendingVarRows((prev) => ({
       ...prev,
-      [selectedCase.id]: [...(prev[selectedCase.id] ?? []), Object.fromEntries(cols.map((v) => [v, ""]))],
+      [selectedCase.id]: [...(prev[selectedCase.id] ?? []), Object.fromEntries(varCols.map((v) => [v, ""]))],
     }));
   };
 
-  const handlePendingVarChange = (rowIndex: number, varName: string, value: string) => {
+  const handlePendingVarChange = (rowIdx: number, varName: string, value: string) => {
     if (!selectedCase) return;
     setPendingVarRows((prev) => {
       const rows = [...(prev[selectedCase.id] ?? [])];
-      rows[rowIndex] = { ...rows[rowIndex], [varName]: value };
+      rows[rowIdx] = { ...rows[rowIdx], [varName]: value };
       return { ...prev, [selectedCase.id]: rows };
     });
   };
 
-  const handleDeletePendingRow = (rowIndex: number) => {
+  const handleDeletePendingRow = (rowIdx: number) => {
     if (!selectedCase) return;
     setPendingVarRows((prev) => {
       const rows = [...(prev[selectedCase.id] ?? [])];
-      rows.splice(rowIndex, 1);
+      rows.splice(rowIdx, 1);
       return { ...prev, [selectedCase.id]: rows };
     });
   };
@@ -271,10 +335,7 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onPlanUpdate }: Pro
     setError(null);
     try {
       await deleteVariableSet(vsId);
-      setVariableSets((prev) => ({
-        ...prev,
-        [selectedCase.id]: (prev[selectedCase.id] ?? []).filter((vs) => vs.id !== vsId),
-      }));
+      setVariableSets((prev) => ({ ...prev, [selectedCase.id]: (prev[selectedCase.id] ?? []).filter((vs) => vs.id !== vsId) }));
     } catch (e) {
       setError(`删除变量集失败: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -282,33 +343,25 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onPlanUpdate }: Pro
     }
   };
 
-  const handleAddCustomCol = (caseId: string) => {
-    const name = (newColName[caseId] ?? "").trim();
-    if (!name) return;
-    setCustomVarCols((prev) => ({ ...prev, [caseId]: [...(prev[caseId] ?? []), name] }));
-    setNewColName((prev) => ({ ...prev, [caseId]: "" }));
-    setPendingVarRows((prev) => ({
-      ...prev,
-      [caseId]: (prev[caseId] ?? []).map((row) => ({ ...row, [name]: "" })),
-    }));
-  };
-
   const handleSaveVarRows = async () => {
     if (!selectedCase) return;
     const rows = pendingVarRows[selectedCase.id] ?? [];
     if (rows.length === 0) return;
+
+    // Reject rows where every value is empty
+    const allEmptyRows = rows.filter((row) => Object.values(row).every((v) => !v.trim()));
+    if (allEmptyRows.length > 0) {
+      setError(`存在 ${allEmptyRows.length} 行变量值全部为空，请填写后再保存`);
+      return;
+    }
+
     setError(null);
     setSavingVars(true);
     try {
       const validKeys = new Set(getVarCols(selectedCase));
-      const filtered = rows.map((row) =>
-        Object.fromEntries(Object.entries(row).filter(([k]) => validKeys.has(k))),
-      );
+      const filtered = rows.map((row) => Object.fromEntries(Object.entries(row).filter(([k]) => validKeys.has(k))));
       const saved = await importVariableSets(selectedCase.id, filtered);
-      setVariableSets((prev) => ({
-        ...prev,
-        [selectedCase.id]: [...(prev[selectedCase.id] ?? []), ...saved],
-      }));
+      setVariableSets((prev) => ({ ...prev, [selectedCase.id]: [...(prev[selectedCase.id] ?? []), ...saved] }));
       setPendingVarRows((prev) => ({ ...prev, [selectedCase.id]: [] }));
     } catch (e) {
       setError(`保存变量集失败: ${e instanceof Error ? e.message : String(e)}`);
@@ -317,7 +370,7 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onPlanUpdate }: Pro
     }
   };
 
-  // ── confirm with full validation ───────────────────────────────────────────
+  // ── confirm / cancel ───────────────────────────────────────────────────────
 
   const handleConfirm = async () => {
     const errors: Record<string, CaseError> = {};
@@ -328,11 +381,15 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onPlanUpdate }: Pro
     if (Object.keys(errors).length > 0) {
       setInvalidCaseIds(new Set(Object.keys(errors)));
       const lines = Object.entries(errors).map(([cid, err]) => {
-        const name = plan.cases.find((c) => c.id === cid)?.case_name ?? cid;
+        const name = plan.cases.find((c) => c.id === cid)?.case_name || cid;
         const parts: string[] = [];
+        if (err.emptyName) parts.push("用例名称不能为空");
+        if (err.emptyUrl) parts.push("起始 URL 不能为空");
+        if (err.invalidUrl) parts.push("起始 URL 格式无效（需以 http:// 或 https:// 开头）");
         if (err.missingVarSets) parts.push("缺少变量集");
         if (err.missingVars.length > 0) parts.push(`步骤变量 {${err.missingVars.join("}, {")}} 未在变量集中定义`);
         if (err.extraVars.length > 0) parts.push(`变量集列 ${err.extraVars.join(", ")} 未在步骤中使用`);
+        if (err.emptyVarValues.length > 0) parts.push(`变量 ${err.emptyVarValues.join(", ")} 存在空值`);
         return `「${name}」：${parts.join("；")}`;
       });
       setError(lines.join("\n"));
@@ -352,6 +409,18 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onPlanUpdate }: Pro
     }
   };
 
+  const handleCancel = async () => {
+    if (!window.confirm("取消后测试计划将被丢弃，确认取消？")) return;
+    setCancelling(true);
+    try {
+      // Resume the SSE so the backend doesn't hang, then notify parent
+      await resumeAgentSession(sessionId).catch(() => {});
+      onCancel();
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   const displayError = error ?? saveError;
 
   // ── render ─────────────────────────────────────────────────────────────────
@@ -364,27 +433,32 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onPlanUpdate }: Pro
           <h2 className="text-sm font-semibold text-gray-800">{plan.name}</h2>
           <p className="text-xs text-gray-500">{plan.cases.length} 个用例</p>
         </div>
-        <button
-          type="button"
-          onClick={handleConfirm}
-          disabled={confirming || plan.status !== "draft"}
-          className="px-3 py-1.5 text-xs font-medium rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          aria-label="确认测试计划"
-        >
-          {confirming ? "确认中..." : plan.status === "draft" ? "确认计划" : "已确认"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleCancel}
+            disabled={cancelling || plan.status !== "draft"}
+            className="px-3 py-1.5 text-xs font-medium rounded-md border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            aria-label="取消测试计划"
+          >
+            {cancelling ? "取消中..." : "取消"}
+          </button>
+          <button
+            type="button"
+            onClick={handleConfirm}
+            disabled={confirming || plan.status !== "draft"}
+            className="px-3 py-1.5 text-xs font-medium rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            aria-label="确认测试计划"
+          >
+            {confirming ? "确认中..." : plan.status === "draft" ? "确认计划" : "已确认"}
+          </button>
+        </div>
       </div>
 
       {displayError && (
         <div className="mx-4 mt-2 px-3 py-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-md whitespace-pre-line">
           {displayError}
-          <button
-            type="button"
-            onClick={() => { setError(null); setSaveError(null); }}
-            className="ml-2 underline"
-          >
-            关闭
-          </button>
+          <button type="button" onClick={() => { setError(null); setSaveError(null); }} className="ml-2 underline">关闭</button>
         </div>
       )}
 
@@ -395,43 +469,22 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onPlanUpdate }: Pro
             const isInvalid = invalidCaseIds.has(c.id);
             const isSelected = c.id === selectedCaseId;
             return (
-              <div
-                key={c.id}
-                className={`group relative border-b ${
-                  isInvalid
-                    ? "border-l-2 border-l-red-500 bg-red-50"
-                    : isSelected
-                    ? "border-l-2 border-l-blue-500 bg-blue-50"
-                    : "border-gray-100"
-                }`}
-              >
-                <button
-                  type="button"
-                  onClick={() => handleSelectCase(c.id)}
-                  className="w-full text-left px-3 py-2.5 hover:bg-gray-50 transition-colors pr-8"
-                >
-                  <p className={`text-xs font-medium truncate ${isInvalid ? "text-red-700" : "text-gray-800"}`}>
-                    {c.case_name}
-                  </p>
+              <div key={c.id} className={`group relative border-b ${isInvalid ? "border-l-2 border-l-red-500 bg-red-50" : isSelected ? "border-l-2 border-l-blue-500 bg-blue-50" : "border-gray-100"}`}>
+                <button type="button" onClick={() => handleSelectCase(c.id)} className="w-full text-left px-3 py-2.5 hover:bg-gray-50 transition-colors pr-8">
+                  <p className={`text-xs font-medium truncate ${isInvalid ? "text-red-700" : "text-gray-800"}`}>{c.case_name || <span className="italic text-gray-400">未命名</span>}</p>
                   {c.module && <p className="text-xs text-gray-400 truncate">{c.module}</p>}
                   <p className="text-xs text-gray-400">{c.steps.length} 步骤</p>
                   {isInvalid && <p className="text-xs text-red-500 mt-0.5">⚠ 校验未通过</p>}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => handleDeleteCase(c.id)}
-                  disabled={deletingCaseId === c.id}
+                <button type="button" onClick={() => handleDeleteCase(c.id)} disabled={deletingCaseId === c.id}
                   className="absolute right-1.5 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 rounded text-gray-400 hover:text-red-500 hover:bg-red-50 transition-all disabled:opacity-30"
-                  aria-label={`删除用例 ${c.case_name}`}
-                >
+                  aria-label={`删除用例 ${c.case_name}`}>
                   {deletingCaseId === c.id ? "…" : "✕"}
                 </button>
               </div>
             );
           })}
-          {plan.cases.length === 0 && (
-            <p className="px-3 py-4 text-xs text-gray-400 text-center">暂无用例</p>
-          )}
+          {plan.cases.length === 0 && <p className="px-3 py-4 text-xs text-gray-400 text-center">暂无用例</p>}
         </div>
 
         {/* Case detail */}
@@ -447,6 +500,9 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onPlanUpdate }: Pro
               savingVars={savingVars}
               deletingVsId={deletingVsId}
               newColName={newColName[selectedCase.id] ?? ""}
+              newColError={newColError}
+              editingCol={editingCol?.caseId === selectedCase.id ? editingCol : null}
+              editColError={editColError}
               onMetaChange={handleMetaChange}
               onStepChange={handleStepChange}
               onAddStep={handleAddStep}
@@ -460,13 +516,15 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onPlanUpdate }: Pro
               onDeleteSavedVarSet={handleDeleteSavedVarSet}
               onSaveVarRows={handleSaveVarRows}
               onAddCustomCol={() => handleAddCustomCol(selectedCase.id)}
-              onNewColNameChange={(v) => setNewColName((prev) => ({ ...prev, [selectedCase.id]: v }))}
+              onNewColNameChange={(v) => { setNewColName((prev) => ({ ...prev, [selectedCase.id]: v })); setNewColError(null); }}
+              onStartEditCol={(idx, name) => handleStartEditCol(selectedCase.id, idx, name)}
+              onEditColChange={(v) => setEditingCol((prev) => prev ? { ...prev, value: v } : null)}
+              onCommitEditCol={handleCommitEditCol}
+              onCancelEditCol={() => { setEditingCol(null); setEditColError(null); }}
             />
           </div>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-sm text-gray-400">
-            暂无用例
-          </div>
+          <div className="flex-1 flex items-center justify-center text-sm text-gray-400">暂无用例</div>
         )}
       </div>
     </div>
@@ -485,78 +543,73 @@ interface CaseDetailProps {
   savingVars: boolean;
   deletingVsId: string | null;
   newColName: string;
+  newColError: string | null;
+  editingCol: { caseId: string; idx: number; value: string } | null;
+  editColError: string | null;
   onMetaChange: (caseId: string, field: "case_name" | "start_url" | "module" | "function_point", value: string) => void;
-  onStepChange: (caseId: string, stepIndex: number, field: keyof TestStepView, value: string | boolean) => void;
+  onStepChange: (caseId: string, idx: number, field: keyof TestStepView, value: string | boolean) => void;
   onAddStep: (caseId: string) => void;
-  onDeleteStep: (caseId: string, stepIndex: number) => void;
+  onDeleteStep: (caseId: string, idx: number) => void;
   onDragStart: (idx: number) => void;
   onDragOver: (e: React.DragEvent, idx: number) => void;
   onDragEnd: () => void;
   onAddVarRow: () => void;
-  onPendingVarChange: (rowIndex: number, varName: string, value: string) => void;
-  onDeletePendingRow: (rowIndex: number) => void;
+  onPendingVarChange: (rowIdx: number, varName: string, value: string) => void;
+  onDeletePendingRow: (rowIdx: number) => void;
   onDeleteSavedVarSet: (vsId: string) => void;
   onSaveVarRows: () => void;
   onAddCustomCol: () => void;
   onNewColNameChange: (v: string) => void;
+  onStartEditCol: (idx: number, name: string) => void;
+  onEditColChange: (v: string) => void;
+  onCommitEditCol: () => void;
+  onCancelEditCol: () => void;
 }
 
 function CaseDetail({
   testCase, varCols, varSets, pendingVarRows, loadingVars, savingSteps, savingVars,
-  deletingVsId, newColName, onMetaChange, onStepChange, onAddStep, onDeleteStep,
-  onDragStart, onDragOver, onDragEnd, onAddVarRow, onPendingVarChange,
-  onDeletePendingRow, onDeleteSavedVarSet, onSaveVarRows, onAddCustomCol, onNewColNameChange,
+  deletingVsId, newColName, newColError, editingCol, editColError,
+  onMetaChange, onStepChange, onAddStep, onDeleteStep,
+  onDragStart, onDragOver, onDragEnd,
+  onAddVarRow, onPendingVarChange, onDeletePendingRow, onDeleteSavedVarSet, onSaveVarRows,
+  onAddCustomCol, onNewColNameChange, onStartEditCol, onEditColChange, onCommitEditCol, onCancelEditCol,
 }: CaseDetailProps) {
   const noVarsFromLLM = testCase.global_variables.length === 0;
   const hasVarCols = varCols.length > 0;
 
   return (
     <div className="p-4 space-y-5">
-      {/* ── Case meta ── */}
+      {/* ── Meta ── */}
       <section className="space-y-2">
-        <div className="flex items-center gap-1">
-          {savingSteps && <span className="text-xs text-blue-500">保存中...</span>}
-        </div>
+        {savingSteps && <p className="text-xs text-blue-500">保存中...</p>}
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="block text-xs text-gray-500 mb-0.5">用例名称 *</label>
-            <input
-              type="text"
-              value={testCase.case_name}
+            <input type="text" value={testCase.case_name}
               onChange={(e) => onMetaChange(testCase.id, "case_name", e.target.value)}
               className="w-full text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300"
-              aria-label="用例名称"
-            />
+              aria-label="用例名称" />
           </div>
           <div>
             <label className="block text-xs text-gray-500 mb-0.5">起始 URL *</label>
-            <input
-              type="text"
-              value={testCase.start_url}
+            <input type="text" value={testCase.start_url}
               onChange={(e) => onMetaChange(testCase.id, "start_url", e.target.value)}
               className="w-full text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300"
-              aria-label="起始 URL"
-            />
+              aria-label="起始 URL" />
           </div>
           <div>
             <label className="block text-xs text-gray-500 mb-0.5">模块</label>
-            <input
-              type="text"
-              value={testCase.module ?? ""}
+            <input type="text" value={testCase.module ?? ""}
               onChange={(e) => onMetaChange(testCase.id, "module", e.target.value)}
               className="w-full text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300"
-              aria-label="模块"
-            />
+              aria-label="模块" />
           </div>
           <div>
             <label className="block text-xs text-gray-500 mb-0.5">功能点</label>
-            <input
-              type="text"
-              value={testCase.function_point ?? ""}
+            <input type="text" value={testCase.function_point ?? ""}
               onChange={(e) => onMetaChange(testCase.id, "function_point", e.target.value)}
               className="w-full text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300"
-              aria-label="功能点"
-            />
+              aria-label="功能点" />
           </div>
         </div>
       </section>
@@ -564,88 +617,68 @@ function CaseDetail({
       {/* ── Steps ── */}
       <section>
         <div className="flex items-center justify-between mb-2">
-          <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
-            测试步骤
-          </h4>
-          <button
-            type="button"
-            onClick={() => onAddStep(testCase.id)}
-            className="text-xs text-blue-600 hover:text-blue-800"
-            aria-label="添加步骤"
-          >
+          <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">测试步骤</h4>
+          <button type="button" onClick={() => onAddStep(testCase.id)} className="text-xs text-blue-600 hover:text-blue-800" aria-label="添加步骤">
             + 添加步骤
           </button>
         </div>
         <div className="border border-gray-200 rounded-md overflow-hidden">
-          <table className="w-full text-xs" role="table">
+          <table className="w-full text-xs table-fixed" role="table">
+            <colgroup>
+              <col className="w-5" />
+              <col className="w-7" />
+              <col className="w-[40%]" />
+              <col className="w-[40%]" />
+              <col className="w-10" />
+              <col className="w-6" />
+            </colgroup>
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-1 py-2 w-5 text-gray-400" title="拖拽排序" />
-                <th className="px-2 py-2 text-left text-gray-500 font-medium w-8">#</th>
+                <th className="px-1 py-2 text-gray-400 w-5" title="拖拽排序" />
+                <th className="px-2 py-2 text-left text-gray-500 font-medium">#</th>
                 <th className="px-2 py-2 text-left text-gray-500 font-medium">操作描述</th>
                 <th className="px-2 py-2 text-left text-gray-500 font-medium">预期结果</th>
-                <th className="px-2 py-2 text-center text-gray-500 font-medium w-10">视觉</th>
+                <th className="px-2 py-2 text-center text-gray-500 font-medium">视觉</th>
                 <th className="w-6" />
               </tr>
             </thead>
             <tbody>
               {testCase.steps.map((step, idx) => (
-                <tr
-                  key={step.step_number}
-                  className="border-t border-gray-100 group"
-                  draggable
-                  onDragStart={() => onDragStart(idx)}
-                  onDragOver={(e) => onDragOver(e, idx)}
-                  onDragEnd={onDragEnd}
-                >
-                  <td className="px-1 py-1.5 text-gray-300 cursor-grab select-none text-center align-top">
-                    ⠿
-                  </td>
-                  <td className="px-2 py-1.5 text-gray-400 align-top">{step.step_number}</td>
-                  <td className="px-2 py-1.5 align-top">
-                    <textarea
-                      className="w-full text-xs text-gray-800 resize-none border-0 focus:outline-none focus:ring-1 focus:ring-blue-300 rounded p-0.5 min-h-[40px]"
+                <tr key={step.step_number} className="border-t border-gray-100 group align-top"
+                  draggable onDragStart={() => onDragStart(idx)} onDragOver={(e) => onDragOver(e, idx)} onDragEnd={onDragEnd}>
+                  <td className="px-1 py-2 text-gray-300 cursor-grab select-none text-center">⠿</td>
+                  <td className="px-2 py-2 text-gray-400">{step.step_number}</td>
+                  <td className="px-2 py-1.5">
+                    <StepTextarea
                       value={step.action_description}
-                      onChange={(e) => onStepChange(testCase.id, idx, "action_description", e.target.value)}
-                      aria-label={`步骤 ${step.step_number} 操作描述`}
+                      placeholder="操作描述"
+                      onChange={(v) => onStepChange(testCase.id, idx, "action_description", v)}
+                      ariaLabel={`步骤 ${step.step_number} 操作描述`}
                     />
                   </td>
-                  <td className="px-2 py-1.5 align-top">
-                    <textarea
-                      className="w-full text-xs text-gray-600 resize-none border-0 focus:outline-none focus:ring-1 focus:ring-blue-300 rounded p-0.5 min-h-[40px]"
+                  <td className="px-2 py-1.5">
+                    <StepTextarea
                       value={step.expected_result ?? ""}
                       placeholder="无预期结果"
-                      onChange={(e) => onStepChange(testCase.id, idx, "expected_result", e.target.value)}
-                      aria-label={`步骤 ${step.step_number} 预期结果`}
+                      onChange={(v) => onStepChange(testCase.id, idx, "expected_result", v)}
+                      ariaLabel={`步骤 ${step.step_number} 预期结果`}
+                      muted
                     />
                   </td>
-                  <td className="px-2 py-1.5 text-center align-top">
-                    <input
-                      type="checkbox"
-                      checked={step.is_visual_checkpoint}
+                  <td className="px-2 py-2 text-center">
+                    <input type="checkbox" checked={step.is_visual_checkpoint}
                       onChange={(e) => onStepChange(testCase.id, idx, "is_visual_checkpoint", e.target.checked)}
-                      aria-label={`步骤 ${step.step_number} 视觉检查点`}
-                      className="rounded"
-                    />
+                      aria-label={`步骤 ${step.step_number} 视觉检查点`} className="rounded" />
                   </td>
-                  <td className="px-1 py-1.5 text-center align-top">
-                    <button
-                      type="button"
-                      onClick={() => onDeleteStep(testCase.id, idx)}
+                  <td className="px-1 py-2 text-center">
+                    <button type="button" onClick={() => onDeleteStep(testCase.id, idx)}
                       className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-gray-400 hover:text-red-500 hover:bg-red-50 transition-all"
-                      aria-label={`删除步骤 ${step.step_number}`}
-                    >
-                      ✕
-                    </button>
+                      aria-label={`删除步骤 ${step.step_number}`}>✕</button>
                   </td>
                 </tr>
               ))}
               {testCase.steps.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="px-2 py-3 text-center text-gray-400">
-                    暂无步骤，点击"添加步骤"
-                  </td>
-                </tr>
+                <tr><td colSpan={6} className="px-2 py-3 text-center text-gray-400">暂无步骤，点击"添加步骤"</td></tr>
               )}
             </tbody>
           </table>
@@ -655,12 +688,7 @@ function CaseDetail({
       {/* ── Variable sets ── */}
       <section>
         <div className="flex items-center justify-between mb-2">
-          <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
-            变量集
-            {varCols.length > 0 && (
-              <span className="ml-1 text-gray-400 normal-case font-normal">({varCols.join(", ")})</span>
-            )}
-          </h4>
+          <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">变量集</h4>
           {hasVarCols && (
             <button type="button" onClick={onAddVarRow} className="text-xs text-blue-600 hover:text-blue-800" aria-label="添加变量集行">
               + 添加一行
@@ -668,25 +696,22 @@ function CaseDetail({
           )}
         </div>
 
+        {/* Add / rename custom column */}
         {noVarsFromLLM && (
-          <div className="flex items-center gap-2 mb-2">
-            <input
-              type="text"
-              value={newColName}
-              onChange={(e) => onNewColNameChange(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && onAddCustomCol()}
-              placeholder="变量名（如 username）"
-              className="flex-1 text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300"
-              aria-label="新变量名"
-            />
-            <button
-              type="button"
-              onClick={onAddCustomCol}
-              disabled={!newColName.trim()}
-              className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-40 transition-colors"
-            >
-              添加变量
-            </button>
+          <div className="mb-2 space-y-1">
+            <div className="flex items-center gap-2">
+              <input type="text" value={newColName} onChange={(e) => onNewColNameChange(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && onAddCustomCol()}
+                placeholder="变量名（英文，如 username）"
+                maxLength={VAR_NAME_MAX}
+                className="flex-1 text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300"
+                aria-label="新变量名" />
+              <button type="button" onClick={onAddCustomCol} disabled={!newColName.trim()}
+                className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-40 transition-colors">
+                添加变量
+              </button>
+            </div>
+            {newColError && <p className="text-xs text-red-600">{newColError}</p>}
           </div>
         )}
 
@@ -699,8 +724,30 @@ function CaseDetail({
             <table className="w-full text-xs" role="table">
               <thead className="bg-gray-50">
                 <tr>
-                  {varCols.map((v) => (
-                    <th key={v} className="px-2 py-2 text-left text-gray-500 font-medium">{v}</th>
+                  {varCols.map((v, colIdx) => (
+                    <th key={v} className="px-2 py-2 text-left text-gray-500 font-medium">
+                      {noVarsFromLLM ? (
+                        editingCol?.idx === colIdx ? (
+                          <div className="space-y-0.5">
+                            <div className="flex items-center gap-1">
+                              <input type="text" value={editingCol.value} onChange={(e) => onEditColChange(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === "Enter") onCommitEditCol(); if (e.key === "Escape") onCancelEditCol(); }}
+                                maxLength={VAR_NAME_MAX}
+                                className="w-full text-xs border border-blue-300 rounded px-1 py-0.5 focus:outline-none"
+                                autoFocus aria-label={`重命名变量 ${v}`} />
+                              <button type="button" onClick={onCommitEditCol} className="text-blue-600 hover:text-blue-800 text-xs">✓</button>
+                              <button type="button" onClick={onCancelEditCol} className="text-gray-400 hover:text-gray-600 text-xs">✕</button>
+                            </div>
+                            {editColError && <p className="text-xs text-red-600">{editColError}</p>}
+                          </div>
+                        ) : (
+                          <button type="button" onClick={() => onStartEditCol(colIdx, v)}
+                            className="hover:text-blue-600 hover:underline cursor-pointer" title="点击重命名">
+                            {v} ✎
+                          </button>
+                        )
+                      ) : v}
+                    </th>
                   ))}
                   <th className="w-6" />
                 </tr>
@@ -712,13 +759,9 @@ function CaseDetail({
                       <td key={v} className="px-2 py-1.5 text-gray-700">{vs.variables[v] ?? ""}</td>
                     ))}
                     <td className="px-1 py-1 text-center">
-                      <button
-                        type="button"
-                        onClick={() => onDeleteSavedVarSet(vs.id)}
-                        disabled={deletingVsId === vs.id}
+                      <button type="button" onClick={() => onDeleteSavedVarSet(vs.id)} disabled={deletingVsId === vs.id}
                         className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-gray-400 hover:text-red-500 hover:bg-red-50 transition-all disabled:opacity-30"
-                        aria-label="删除该变量集"
-                      >
+                        aria-label="删除该变量集">
                         {deletingVsId === vs.id ? "…" : "✕"}
                       </button>
                     </td>
@@ -728,33 +771,19 @@ function CaseDetail({
                   <tr key={`pending-${rowIdx}`} className="border-t border-blue-100 bg-blue-50">
                     {varCols.map((v) => (
                       <td key={v} className="px-1 py-1">
-                        <input
-                          type="text"
-                          value={row[v] ?? ""}
-                          onChange={(e) => onPendingVarChange(rowIdx, v, e.target.value)}
+                        <input type="text" value={row[v] ?? ""} onChange={(e) => onPendingVarChange(rowIdx, v, e.target.value)}
                           className="w-full text-xs border border-gray-200 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-300"
-                          aria-label={`变量 ${v} 第 ${rowIdx + 1} 行`}
-                        />
+                          aria-label={`变量 ${v} 第 ${rowIdx + 1} 行`} />
                       </td>
                     ))}
                     <td className="px-1 py-1 text-center">
-                      <button
-                        type="button"
-                        onClick={() => onDeletePendingRow(rowIdx)}
-                        className="p-0.5 rounded text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
-                        aria-label="删除该行"
-                      >
-                        ✕
-                      </button>
+                      <button type="button" onClick={() => onDeletePendingRow(rowIdx)}
+                        className="p-0.5 rounded text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors" aria-label="删除该行">✕</button>
                     </td>
                   </tr>
                 ))}
                 {varSets.length === 0 && pendingVarRows.length === 0 && (
-                  <tr>
-                    <td colSpan={varCols.length + 1} className="px-2 py-3 text-center text-gray-400">
-                      暂无变量集，点击"添加一行"填写
-                    </td>
-                  </tr>
+                  <tr><td colSpan={varCols.length + 1} className="px-2 py-3 text-center text-gray-400">暂无变量集，点击"添加一行"填写</td></tr>
                 )}
               </tbody>
             </table>
@@ -762,16 +791,53 @@ function CaseDetail({
         )}
 
         {pendingVarRows.length > 0 && (
-          <button
-            type="button"
-            onClick={onSaveVarRows}
-            disabled={savingVars}
-            className="mt-2 px-3 py-1 text-xs font-medium rounded-md bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
+          <button type="button" onClick={onSaveVarRows} disabled={savingVars}
+            className="mt-2 px-3 py-1 text-xs font-medium rounded-md bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
             {savingVars ? "保存中..." : "保存变量集"}
           </button>
         )}
       </section>
+    </div>
+  );
+}
+
+// ── StepTextarea: auto-resize + {var} highlight overlay ──────────────────────
+
+interface StepTextareaProps {
+  value: string;
+  placeholder: string;
+  onChange: (v: string) => void;
+  ariaLabel: string;
+  muted?: boolean;
+}
+
+function StepTextarea({ value, placeholder, onChange, ariaLabel, muted }: StepTextareaProps) {
+  // Overlay approach: transparent textarea on top of a div that renders highlighted text.
+  // Both share the same font/padding so they align pixel-perfectly.
+  const sharedClass = "text-xs font-sans leading-relaxed px-0.5 py-0 w-full min-h-[40px] whitespace-pre-wrap break-words";
+
+  return (
+    <div className="relative">
+      {/* Highlight layer (behind textarea) */}
+      <div
+        aria-hidden
+        className={`${sharedClass} text-transparent pointer-events-none select-none`}
+        style={{ minHeight: 40 }}
+      >
+        <HighlightedText text={value || placeholder} />
+        {/* Extra space so the div is always at least as tall as the textarea */}
+        {"\u200b"}
+      </div>
+      {/* Actual textarea (transparent text, sits on top) */}
+      <textarea
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label={ariaLabel}
+        rows={1}
+        className={`${sharedClass} absolute inset-0 resize-none bg-transparent border-0 focus:outline-none focus:ring-1 focus:ring-blue-300 rounded overflow-hidden ${muted ? "text-gray-600 placeholder:text-gray-400" : "text-gray-800 placeholder:text-gray-400"} caret-gray-800`}
+        style={{ color: "transparent", caretColor: muted ? "#4b5563" : "#1f2937" }}
+      />
     </div>
   );
 }
