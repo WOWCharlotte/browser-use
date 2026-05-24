@@ -55,7 +55,7 @@ function validateCase(c: TestCaseView, savedSets: VariableSetView[], varCols: st
   const cols = new Set(varCols);
   const emptyName = !c.case_name.trim();
   const emptyUrl = !c.start_url.trim();
-  const invalidUrl = !emptyUrl && !/^https?:\/\/.+/.test(c.start_url.trim());
+  const invalidUrl = !emptyUrl && !/^https?:\/\/[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*(\:\d{1,5})?(\/.*)?$/.test(c.start_url.trim());
   const missingVarSets = cols.size > 0 && savedSets.length === 0;
   const missingVars = [...required].filter((v) => !cols.has(v));
   const extraVars = [...cols].filter((v) => !required.has(v));
@@ -80,23 +80,6 @@ function validateVarName(name: string): string | null {
   return null;
 }
 
-// ── Highlight {vars} in text ──────────────────────────────────────────────────
-
-function HighlightedText({ text }: { text: string }) {
-  const parts = text.split(/(\{[a-zA-Z_][a-zA-Z0-9_]*\})/g);
-  return (
-    <>
-      {parts.map((part, i) =>
-        /^\{[a-zA-Z_][a-zA-Z0-9_]*\}$/.test(part) ? (
-          <span key={i} className="text-blue-600 font-medium">{part}</span>
-        ) : (
-          <span key={i}>{part}</span>
-        ),
-      )}
-    </>
-  );
-}
-
 // ── Debounced save hook ───────────────────────────────────────────────────────
 
 function useDebouncedSave(plan: TestPlanDetailView, onPlanUpdate: (p: TestPlanDetailView) => void) {
@@ -104,6 +87,13 @@ function useDebouncedSave(plan: TestPlanDetailView, onPlanUpdate: (p: TestPlanDe
   const abortRef = useRef<AbortController | null>(null);
   const [savingCaseId, setSavingCaseId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Always hold the latest plan/onPlanUpdate in refs so the async callback
+  // never closes over a stale snapshot.
+  const planRef = useRef(plan);
+  planRef.current = plan;
+  const onPlanUpdateRef = useRef(onPlanUpdate);
+  onPlanUpdateRef.current = onPlanUpdate;
 
   const save = useCallback(
     (caseId: string, patch: Parameters<typeof updateTestCase>[1]) => {
@@ -117,7 +107,8 @@ function useDebouncedSave(plan: TestPlanDetailView, onPlanUpdate: (p: TestPlanDe
         try {
           const updated = await updateTestCase(caseId, patch);
           if (ctrl.signal.aborted) return;
-          onPlanUpdate({ ...plan, cases: plan.cases.map((c) => (c.id === caseId ? { ...c, ...updated } : c)) });
+          // No need to call onPlanUpdate — localPlan is the source of truth.
+          // Just log success silently.
         } catch (e) {
           if (ctrl.signal.aborted) return;
           setSaveError(`保存失败: ${e instanceof Error ? e.message : String(e)}`);
@@ -126,7 +117,7 @@ function useDebouncedSave(plan: TestPlanDetailView, onPlanUpdate: (p: TestPlanDe
         }
       }, 300);
     },
-    [plan, onPlanUpdate],
+    [], // stable — reads latest values via refs
   );
 
   const cancel = useCallback(() => {
@@ -136,13 +127,21 @@ function useDebouncedSave(plan: TestPlanDetailView, onPlanUpdate: (p: TestPlanDe
     setSavingCaseId(null);
   }, []);
 
-  return { save, cancel, savingCaseId, saveError, setSaveError };
+  return { save, cancel, savingCaseId, saveError, setSaveError, planRef, onPlanUpdateRef };
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpdate }: Props) {
-  const [selectedCaseId, setSelectedCaseId] = useState<string>(plan.cases[0]?.id ?? "");
+  // Local copy of plan — textarea values are driven from here, not from props.
+  // This prevents parent re-renders from resetting cursor position.
+  const [localPlan, setLocalPlan] = useState(plan);
+  // Sync from parent only when plan.id changes (new plan loaded)
+  if (plan.id !== localPlan.id) {
+    setLocalPlan(plan);
+  }
+
+  const [selectedCaseId, setSelectedCaseId] = useState<string>(localPlan.cases[0]?.id ?? "");
   const [variableSets, setVariableSets] = useState<Record<string, VariableSetView[]>>({});
   const [deletingCaseId, setDeletingCaseId] = useState<string | null>(null);
   const [deletingVsId, setDeletingVsId] = useState<string | null>(null);
@@ -162,9 +161,9 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
   const [invalidCaseIds, setInvalidCaseIds] = useState<Set<string>>(new Set());
   const dragStepIdx = useRef<number | null>(null);
 
-  const { save, cancel, savingCaseId, saveError, setSaveError } = useDebouncedSave(plan, onPlanUpdate);
+  const { save, cancel, savingCaseId, saveError, setSaveError, planRef, onPlanUpdateRef } = useDebouncedSave(localPlan, onPlanUpdate);
 
-  const selectedCase = plan.cases.find((c) => c.id === selectedCaseId) ?? plan.cases[0];
+  const selectedCase = localPlan.cases.find((c) => c.id === selectedCaseId) ?? localPlan.cases[0];
 
   const getVarCols = (c: TestCaseView): string[] =>
     c.global_variables.length > 0 ? c.global_variables : (customVarCols[c.id] ?? []);
@@ -195,7 +194,7 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
     field: "case_name" | "start_url" | "module" | "function_point",
     value: string,
   ) => {
-    onPlanUpdate({ ...plan, cases: plan.cases.map((c) => (c.id === caseId ? { ...c, [field]: value } : c)) });
+    setLocalPlan((prev) => ({ ...prev, cases: prev.cases.map((c) => (c.id === caseId ? { ...c, [field]: value } : c)) }));
     save(caseId, { [field]: value });
   };
 
@@ -207,9 +206,11 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
     setError(null);
     try {
       await deleteTestCase(caseId);
-      const remaining = plan.cases.filter((c) => c.id !== caseId);
-      onPlanUpdate({ ...plan, cases: remaining });
-      if (selectedCaseId === caseId) setSelectedCaseId(remaining[0]?.id ?? "");
+      setLocalPlan((prev) => ({ ...prev, cases: prev.cases.filter((c) => c.id !== caseId) }));
+      if (selectedCaseId === caseId) {
+        const remaining = localPlan.cases.filter((c) => c.id !== caseId);
+        setSelectedCaseId(remaining[0]?.id ?? "");
+      }
     } catch (e) {
       setError(`删除失败: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -221,24 +222,31 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
 
   const applySteps = (caseId: string, steps: TestStepView[]) => {
     const renumbered = steps.map((s, i) => ({ ...s, step_number: i + 1 }));
-    onPlanUpdate({ ...plan, cases: plan.cases.map((c) => (c.id === caseId ? { ...c, steps: renumbered } : c)) });
+    setLocalPlan((prev) => ({ ...prev, cases: prev.cases.map((c) => (c.id === caseId ? { ...c, steps: renumbered } : c)) }));
     save(caseId, { steps: renumbered });
   };
 
   const handleStepChange = (caseId: string, idx: number, field: keyof TestStepView, value: string | boolean) => {
-    const c = plan.cases.find((x) => x.id === caseId);
-    if (!c) return;
-    applySteps(caseId, c.steps.map((s, i) => (i === idx ? { ...s, [field]: value } : s)));
+    let updatedSteps: TestStepView[] = [];
+    setLocalPlan((prev) => {
+      const c = prev.cases.find((x) => x.id === caseId);
+      if (!c) return prev;
+      updatedSteps = c.steps.map((s, i) => (i === idx ? { ...s, [field]: value } : s))
+        .map((s, i) => ({ ...s, step_number: i + 1 }));
+      return { ...prev, cases: prev.cases.map((c2) => (c2.id === caseId ? { ...c2, steps: updatedSteps } : c2)) };
+    });
+    // Use setTimeout(0) to ensure setLocalPlan has committed before save reads planRef
+    setTimeout(() => save(caseId, { steps: updatedSteps }), 0);
   };
 
   const handleAddStep = (caseId: string) => {
-    const c = plan.cases.find((x) => x.id === caseId);
+    const c = localPlan.cases.find((x) => x.id === caseId);
     if (!c) return;
     applySteps(caseId, [...c.steps, { step_number: c.steps.length + 1, action_description: "", expected_result: null, step_variables: [], is_visual_checkpoint: false }]);
   };
 
   const handleDeleteStep = (caseId: string, idx: number) => {
-    const c = plan.cases.find((x) => x.id === caseId);
+    const c = localPlan.cases.find((x) => x.id === caseId);
     if (!c) return;
     applySteps(caseId, c.steps.filter((_, i) => i !== idx));
   };
@@ -251,7 +259,9 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
     const [moved] = steps.splice(dragStepIdx.current, 1);
     steps.splice(idx, 0, moved);
     dragStepIdx.current = idx;
-    applySteps(selectedCase.id, steps);
+    const renumbered = steps.map((s, i) => ({ ...s, step_number: i + 1 }));
+    setLocalPlan((prev) => ({ ...prev, cases: prev.cases.map((c) => (c.id === selectedCase.id ? { ...c, steps: renumbered } : c)) }));
+    save(selectedCase.id, { steps: renumbered });
   };
   const handleDragEnd = () => { dragStepIdx.current = null; };
 
@@ -272,6 +282,21 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
   const handleStartEditCol = (caseId: string, idx: number, currentName: string) => {
     setEditingCol({ caseId, idx, value: currentName });
     setEditColError(null);
+  };
+
+  const handleDeleteCustomCol = (caseId: string, idx: number) => {
+    const cols = [...(customVarCols[caseId] ?? [])];
+    const removed = cols[idx];
+    cols.splice(idx, 1);
+    setCustomVarCols((prev) => ({ ...prev, [caseId]: cols }));
+    // Remove the column key from all pending rows
+    setPendingVarRows((prev) => ({
+      ...prev,
+      [caseId]: (prev[caseId] ?? []).map((row) => {
+        const { [removed]: _, ...rest } = row;
+        return rest;
+      }),
+    }));
   };
 
   const handleCommitEditCol = () => {
@@ -374,18 +399,18 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
 
   const handleConfirm = async () => {
     const errors: Record<string, CaseError> = {};
-    for (const c of plan.cases) {
+    for (const c of localPlan.cases) {
       const err = validateCase(c, variableSets[c.id] ?? [], getVarCols(c));
       if (err) errors[c.id] = err;
     }
     if (Object.keys(errors).length > 0) {
       setInvalidCaseIds(new Set(Object.keys(errors)));
       const lines = Object.entries(errors).map(([cid, err]) => {
-        const name = plan.cases.find((c) => c.id === cid)?.case_name || cid;
+        const name = localPlan.cases.find((c) => c.id === cid)?.case_name || cid;
         const parts: string[] = [];
         if (err.emptyName) parts.push("用例名称不能为空");
         if (err.emptyUrl) parts.push("起始 URL 不能为空");
-        if (err.invalidUrl) parts.push("起始 URL 格式无效（需以 http:// 或 https:// 开头）");
+        if (err.invalidUrl) parts.push("起始 URL 格式无效（需为合法的 http(s)://域名 格式）");
         if (err.missingVarSets) parts.push("缺少变量集");
         if (err.missingVars.length > 0) parts.push(`步骤变量 {${err.missingVars.join("}, {")}} 未在变量集中定义`);
         if (err.extraVars.length > 0) parts.push(`变量集列 ${err.extraVars.join(", ")} 未在步骤中使用`);
@@ -399,7 +424,7 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
     setConfirming(true);
     setError(null);
     try {
-      await confirmTestPlan(plan.id);
+      await confirmTestPlan(localPlan.id);
       await resumeAgentSession(sessionId);
       onConfirm();
     } catch (e) {
@@ -426,12 +451,12 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
   // ── render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col h-full bg-white">
+    <div className="flex flex-col h-full min-h-0 overflow-hidden bg-white">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
         <div>
-          <h2 className="text-sm font-semibold text-gray-800">{plan.name}</h2>
-          <p className="text-xs text-gray-500">{plan.cases.length} 个用例</p>
+          <h2 className="text-sm font-semibold text-gray-800">{localPlan.name}</h2>
+          <p className="text-xs text-gray-500">{localPlan.cases.length} 个用例</p>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -446,7 +471,7 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
           <button
             type="button"
             onClick={handleConfirm}
-            disabled={confirming || plan.status !== "draft"}
+            disabled={confirming || localPlan.status !== "draft"}
             className="px-3 py-1.5 text-xs font-medium rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             aria-label="确认测试计划"
           >
@@ -465,7 +490,7 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
       <div className="flex flex-1 min-h-0">
         {/* Case list */}
         <div className="w-48 flex-shrink-0 border-r border-gray-200 overflow-y-auto">
-          {plan.cases.map((c) => {
+          {localPlan.cases.map((c) => {
             const isInvalid = invalidCaseIds.has(c.id);
             const isSelected = c.id === selectedCaseId;
             return (
@@ -484,12 +509,12 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
               </div>
             );
           })}
-          {plan.cases.length === 0 && <p className="px-3 py-4 text-xs text-gray-400 text-center">暂无用例</p>}
+          {localPlan.cases.length === 0 && <p className="px-3 py-4 text-xs text-gray-400 text-center">暂无用例</p>}
         </div>
 
         {/* Case detail */}
         {selectedCase ? (
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 min-h-0 overflow-y-auto">
             <CaseDetail
               testCase={selectedCase}
               varCols={varCols}
@@ -518,6 +543,7 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
               onAddCustomCol={() => handleAddCustomCol(selectedCase.id)}
               onNewColNameChange={(v) => { setNewColName((prev) => ({ ...prev, [selectedCase.id]: v })); setNewColError(null); }}
               onStartEditCol={(idx, name) => handleStartEditCol(selectedCase.id, idx, name)}
+              onDeleteCustomCol={(idx) => handleDeleteCustomCol(selectedCase.id, idx)}
               onEditColChange={(v) => setEditingCol((prev) => prev ? { ...prev, value: v } : null)}
               onCommitEditCol={handleCommitEditCol}
               onCancelEditCol={() => { setEditingCol(null); setEditColError(null); }}
@@ -561,6 +587,7 @@ interface CaseDetailProps {
   onAddCustomCol: () => void;
   onNewColNameChange: (v: string) => void;
   onStartEditCol: (idx: number, name: string) => void;
+  onDeleteCustomCol: (idx: number) => void;
   onEditColChange: (v: string) => void;
   onCommitEditCol: () => void;
   onCancelEditCol: () => void;
@@ -572,7 +599,7 @@ function CaseDetail({
   onMetaChange, onStepChange, onAddStep, onDeleteStep,
   onDragStart, onDragOver, onDragEnd,
   onAddVarRow, onPendingVarChange, onDeletePendingRow, onDeleteSavedVarSet, onSaveVarRows,
-  onAddCustomCol, onNewColNameChange, onStartEditCol, onEditColChange, onCommitEditCol, onCancelEditCol,
+  onAddCustomCol, onNewColNameChange, onStartEditCol, onDeleteCustomCol, onEditColChange, onCommitEditCol, onCancelEditCol,
 }: CaseDetailProps) {
   const noVarsFromLLM = testCase.global_variables.length === 0;
   const hasVarCols = varCols.length > 0;
@@ -645,8 +672,9 @@ function CaseDetail({
             <tbody>
               {testCase.steps.map((step, idx) => (
                 <tr key={step.step_number} className="border-t border-gray-100 group align-top"
-                  draggable onDragStart={() => onDragStart(idx)} onDragOver={(e) => onDragOver(e, idx)} onDragEnd={onDragEnd}>
-                  <td className="px-1 py-2 text-gray-300 cursor-grab select-none text-center">⠿</td>
+                  onDragOver={(e) => onDragOver(e, idx)} onDragEnd={onDragEnd}>
+                  <td className="px-1 py-2 text-gray-300 cursor-grab select-none text-center"
+                    draggable onDragStart={() => onDragStart(idx)}>⠿</td>
                   <td className="px-2 py-2 text-gray-400">{step.step_number}</td>
                   <td className="px-2 py-1.5">
                     <StepTextarea
@@ -741,10 +769,17 @@ function CaseDetail({
                             {editColError && <p className="text-xs text-red-600">{editColError}</p>}
                           </div>
                         ) : (
-                          <button type="button" onClick={() => onStartEditCol(colIdx, v)}
-                            className="hover:text-blue-600 hover:underline cursor-pointer" title="点击重命名">
-                            {v} ✎
-                          </button>
+                          <span className="flex items-center gap-1 group/col">
+                            <span>{v}</span>
+                            <button type="button" onClick={() => onStartEditCol(colIdx, v)}
+                              className="opacity-0 group-hover/col:opacity-100 text-gray-400 hover:text-blue-600 transition-all" title="重命名">
+                              ✎
+                            </button>
+                            <button type="button" onClick={() => onDeleteCustomCol(colIdx)}
+                              className="opacity-0 group-hover/col:opacity-100 text-gray-400 hover:text-red-500 transition-all" title="删除该变量列">
+                              ✕
+                            </button>
+                          </span>
                         )
                       ) : v}
                     </th>
@@ -801,7 +836,7 @@ function CaseDetail({
   );
 }
 
-// ── StepTextarea: auto-resize + {var} highlight overlay ──────────────────────
+// ── StepTextarea: plain textarea (no cursor issues) + highlight preview below ─
 
 interface StepTextareaProps {
   value: string;
@@ -811,33 +846,33 @@ interface StepTextareaProps {
   muted?: boolean;
 }
 
-function StepTextarea({ value, placeholder, onChange, ariaLabel, muted }: StepTextareaProps) {
-  // Overlay approach: transparent textarea on top of a div that renders highlighted text.
-  // Both share the same font/padding so they align pixel-perfectly.
-  const sharedClass = "text-xs font-sans leading-relaxed px-0.5 py-0 w-full min-h-[40px] whitespace-pre-wrap break-words";
+function toHighlightHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\n/g, "<br>")
+    .replace(/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g, '<span class="text-blue-600 font-medium">{$1}</span>');
+}
 
+function StepTextarea({ value, placeholder, onChange, ariaLabel, muted }: StepTextareaProps) {
   return (
-    <div className="relative">
-      {/* Highlight layer (behind textarea) */}
-      <div
-        aria-hidden
-        className={`${sharedClass} text-transparent pointer-events-none select-none`}
-        style={{ minHeight: 40 }}
-      >
-        <HighlightedText text={value || placeholder} />
-        {/* Extra space so the div is always at least as tall as the textarea */}
-        {"\u200b"}
-      </div>
-      {/* Actual textarea (transparent text, sits on top) */}
+    <div className="space-y-0.5">
       <textarea
         value={value}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
         aria-label={ariaLabel}
-        rows={1}
-        className={`${sharedClass} absolute inset-0 resize-none bg-transparent border-0 focus:outline-none focus:ring-1 focus:ring-blue-300 rounded overflow-hidden ${muted ? "text-gray-600 placeholder:text-gray-400" : "text-gray-800 placeholder:text-gray-400"} caret-gray-800`}
-        style={{ color: "transparent", caretColor: muted ? "#4b5563" : "#1f2937" }}
+        rows={2}
+        className={`w-full text-xs leading-relaxed resize-y border border-gray-200 rounded px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300 min-h-[40px] ${muted ? "text-gray-600" : "text-gray-800"}`}
       />
+      {/* Variable highlight preview (only shown when text contains {var}) */}
+      {/\{[a-zA-Z_][a-zA-Z0-9_]*\}/.test(value) && (
+        <div
+          className="text-xs leading-relaxed px-1.5 text-gray-500"
+          dangerouslySetInnerHTML={{ __html: toHighlightHtml(value) }}
+        />
+      )}
     </div>
   );
 }
