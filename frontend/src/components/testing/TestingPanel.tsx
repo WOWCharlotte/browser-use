@@ -7,6 +7,7 @@ import { TestCaseEditor } from "./TestCaseEditor";
 
 interface Props {
   snapshot: TestingSnapshot | undefined;
+  sessionId: string | null;
   // BrowserPreview props — passed through when panel_mode is 'browser'
   browserState: BrowserState;
   currentIndex?: number;
@@ -24,6 +25,7 @@ interface Props {
 
 export function TestingPanel({
   snapshot,
+  sessionId,
   browserState,
   currentIndex,
   totalCount,
@@ -42,6 +44,7 @@ export function TestingPanel({
     return (
       <TestCaseEditor
         plan={snapshot.test_plan}
+        sessionId={sessionId ?? ""}
         onConfirm={onConfirm ?? (() => {})}
         onPlanUpdate={onPlanUpdate ?? (() => {})}
       />

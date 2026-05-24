@@ -42,6 +42,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# ── HITL resume 状态 ──────────────────────────────────────────────────────────
+# session_id → asyncio.Event，解析完成后挂起等待用户确认
+_resume_events: dict[str, asyncio.Event] = {}
+
 
 # ============================================================================
 # 附件提取
@@ -258,6 +262,27 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
                         "test_plan": plan_detail.model_dump(),
                     }
                 ))
+
+                # ── HITL：挂起等待用户确认，每 20s 发心跳保活 ──────────────
+                resume_event = asyncio.Event()
+                _resume_events[session_id] = resume_event
+                try:
+                    while not resume_event.is_set():
+                        try:
+                            await asyncio.wait_for(
+                                asyncio.shield(resume_event.wait()),
+                                timeout=20.0,
+                            )
+                        except asyncio.TimeoutError:
+                            yield encoder.encode(
+                                CustomEvent(name="heartbeat", value={"run_id": run_id})
+                            )
+                finally:
+                    _resume_events.pop(session_id, None)
+
+                for chunk in _encode_text(encoder, run_id, "测试计划已确认，可以开始执行。"):
+                    yield chunk
+
             except ValueError as exc:
                 for chunk in _encode_text(encoder, run_id, f"解析失败：{exc}"):
                     yield chunk
@@ -328,6 +353,20 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/agui/resume/{session_id}", status_code=200)
+async def resume_endpoint(session_id: str):
+    """
+    HITL Resume 端点。
+
+    用户在前端确认测试计划后调用此端点，唤醒挂起的 event_generator。
+    """
+    event = _resume_events.get(session_id)
+    if event is None:
+        return {"ok": False, "reason": "no pending session"}
+    event.set()
+    return {"ok": True}
 
 
 # ============================================================================
