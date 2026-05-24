@@ -1,15 +1,16 @@
 """
 Test Case Ingestion Service.
 
-Provides LLM-powered parsing of test cases from unstructured documents,
-extracting steps, actions, expected results, and dynamic variables.
+Provides LLM-powered parsing of test cases from unstructured documents.
+One LLM call extracts all cases, steps, variables, and merges similar cases.
+Output: TestPlanParsedSchema (list[TestCaseParsedSchema]).
 """
 
 import logging
 import re
 
 from app.config import Config
-from app.models.ingestion import TestCaseSchema
+from app.models.ingestion import TestPlanParsedSchema
 from app.services.document_flattening import document_flattener
 from browser_use.llm.messages import SystemMessage, UserMessage
 from browser_use.llm.openai.chat import ChatOpenAI
@@ -17,43 +18,175 @@ from browser_use.llm.openai.chat import ChatOpenAI
 logger = logging.getLogger(__name__)
 
 
-# System prompt for test case extraction
-TEST_CASE_EXTRACTION_PROMPT = """你是一个专业的测试用例分析助手。你的任务是从用户提供的测试用例文档中提取结构化的测试步骤和变量信息。
+TEST_PLAN_EXTRACTION_PROMPT = """你是一个专业的自动化测试用例分析专家。你的任务是从用户提供的测试用例文档中，一次性完成以下三项工作：
+1. **结构化提取**：将每条测试用例拆解为有序步骤，每步包含操作描述和预期结果
+2. **变量提取**：识别可变参数并统一转化为花括号占位符（如 `{username}`）
+3. **用例合并**：将步骤完全相同、仅变量值不同的用例合并为一条用例 + 多组变量集
 
-## 输入格式
-用户会提供一个测试用例文档（Markdown格式），包含测试步骤、操作描述和预期结果。
+## 输出格式
 
-## 输出要求
-你必须输出一个完全符合下面JSON Schema的JSON对象，不要包含任何其他文字：
+你必须输出一个完全符合以下 JSON Schema 的对象，不包含任何其他文字：
 
 ```json
 {
-  "case_name": "string",  // 提炼出能够代表此测试用例的核心唯一业务名称
-  "start_url": "string",  // 该自动化测试执行的起始目标URL。如果用例中未提供，需要根据上下文进行常识性合理推理猜测
-  "steps": [
+  "test_cases": [
     {
-      "step_number": number,  // 操作步骤的自增序号，从1开始
-      "action_description": "string",  // 具体的浏览器操作指令描述。如果发现步骤中包含可变参数（如特定的用户名、手机号、动态日期等），请将其统一转化为英文花括号占位符格式，例如：'在输入框输入 {username}'
-      "expected_result": "string",  // 当前步骤操作完成后，页面应达到的预期状态断言目标
-      "step_variables": ["string"]  // 本步骤中被抽离并转化为花括号占位符的变量名清单
+      "case_name": "string",         // 能唯一标识该用例的核心业务名称，简洁精准
+      "description": "string|null",  // 用例的补充说明，可为 null
+      "module": "string|null",       // 所属功能模块（如"登录"、"购物车"），可为 null
+      "function_point": "string|null", // 具体功能点（如"手机号登录"），可为 null
+      "start_url": "string",         // 测试起始 URL，文档未提供时根据上下文合理推断
+      "steps": [
+        {
+          "step_number": 1,          // 从 1 开始的自增序号
+          "action_description": "string", // 浏览器操作指令，可变参数用 {变量名} 替换
+          "expected_result": "string|null", // 该步骤完成后的预期状态，无则为 null
+          "step_variables": ["string"],     // 本步骤用到的变量名列表（不含花括号）
+          "is_visual_checkpoint": false     // 需要截图对比时设为 true（如验证页面布局、图片）
+        }
+      ],
+      "global_variables": ["string"], // 所有步骤变量的去重汇总，不含花括号
+      "variable_sets": [              // 每组为一次执行的变量值映射，无变量时为 [{}]
+        {"变量名": "值", ...}
+      ]
     }
-  ],
-  "global_variables": ["string"]  // 整个测试用例中所有步骤涉及的变量的全局去重汇总清单
+  ]
 }
 ```
 
-## 变量提取规则
-1. **语义识别**：识别测试数据实体，如测试账号、手机号、商品ID、日期等
-2. **占位符转换**：将可变参数替换为英文花括号命名占位符，如 {user_phone}, {sku_id}
-3. **一致性**：相同含义的变量在不同步骤中必须使用完全相同的占位符名称
-4. **全局汇总**：在 global_variables 中输出所有变量的去重清单
+## 核心规则
 
-## 重要约束
-- action_description 中的所有占位符必须格式正确：{variable_name}，左右花括号缺一不可
-- global_variables 中的变量名不应包含花括号，只包含变量名本身
-- 如果测试用例中没有变量，global_variables 返回空数组 []
-- 如果没有提供start_url，根据上下文合理推断（如 https://github.com/login）
-"""
+### 变量提取
+- **识别范围**：账号、密码、手机号、商品ID、金额、日期、地址等测试数据
+- **命名规范**：英文小写下划线，语义明确，如 `{user_phone}`、`{sku_id}`、`{order_amount}`
+- **一致性**：同一含义的变量在所有步骤中必须使用完全相同的占位符名称
+- **格式要求**：占位符必须完整闭合 `{variable_name}`，禁止 `{variable_name` 或 `{}`
+
+### 用例合并
+- **合并条件**：两条用例的步骤结构完全相同（操作描述模板一致），仅变量值不同
+- **合并方式**：保留一条用例，将各组变量值分别放入 `variable_sets` 数组
+- **不合并条件**：步骤数量不同、操作顺序不同、业务场景不同
+
+### 视觉检查点
+- 当步骤的预期结果涉及页面视觉状态（布局、图片、颜色、样式）时，设 `is_visual_checkpoint: true`
+- 纯文本断言（如"显示成功提示"、"跳转到首页"）设为 `false`
+
+---
+
+## 示例
+
+### 输入文档
+
+```
+## 用例1：手机号登录-正常流程
+1. 打开登录页
+2. 输入手机号 13800138001，点击获取验证码
+3. 输入验证码 123456
+4. 点击登录按钮
+   预期：跳转到首页，顶部显示用户昵称"测试用户A"
+
+## 用例2：手机号登录-另一账号
+1. 打开登录页
+2. 输入手机号 13900139002，点击获取验证码
+3. 输入验证码 654321
+4. 点击登录按钮
+   预期：跳转到首页，顶部显示用户昵称"测试用户B"
+
+## 用例3：商品加入购物车
+1. 搜索商品"蓝牙耳机"
+2. 点击第一个搜索结果
+3. 点击"加入购物车"
+   预期：购物车图标数量+1，弹出"已加入购物车"提示
+```
+
+### 输出
+
+```json
+{
+  "test_cases": [
+    {
+      "case_name": "手机号登录",
+      "description": "使用手机号+验证码完成登录",
+      "module": "登录",
+      "function_point": "手机号验证码登录",
+      "start_url": "https://example.com/login",
+      "steps": [
+        {
+          "step_number": 1,
+          "action_description": "打开登录页",
+          "expected_result": null,
+          "step_variables": [],
+          "is_visual_checkpoint": false
+        },
+        {
+          "step_number": 2,
+          "action_description": "在手机号输入框输入 {user_phone}，点击获取验证码按钮",
+          "expected_result": null,
+          "step_variables": ["user_phone"],
+          "is_visual_checkpoint": false
+        },
+        {
+          "step_number": 3,
+          "action_description": "在验证码输入框输入 {sms_code}",
+          "expected_result": null,
+          "step_variables": ["sms_code"],
+          "is_visual_checkpoint": false
+        },
+        {
+          "step_number": 4,
+          "action_description": "点击登录按钮",
+          "expected_result": "跳转到首页，顶部显示用户昵称 {user_nickname}",
+          "step_variables": ["user_nickname"],
+          "is_visual_checkpoint": false
+        }
+      ],
+      "global_variables": ["user_phone", "sms_code", "user_nickname"],
+      "variable_sets": [
+        {"user_phone": "13800138001", "sms_code": "123456", "user_nickname": "测试用户A"},
+        {"user_phone": "13900139002", "sms_code": "654321", "user_nickname": "测试用户B"}
+      ]
+    },
+    {
+      "case_name": "商品加入购物车",
+      "description": null,
+      "module": "购物车",
+      "function_point": "加入购物车",
+      "start_url": "https://example.com",
+      "steps": [
+        {
+          "step_number": 1,
+          "action_description": "在搜索框输入 {keyword}，点击搜索",
+          "expected_result": null,
+          "step_variables": ["keyword"],
+          "is_visual_checkpoint": false
+        },
+        {
+          "step_number": 2,
+          "action_description": "点击第一个搜索结果",
+          "expected_result": null,
+          "step_variables": [],
+          "is_visual_checkpoint": false
+        },
+        {
+          "step_number": 3,
+          "action_description": "点击"加入购物车"按钮",
+          "expected_result": "购物车图标数量+1，弹出"已加入购物车"提示",
+          "step_variables": [],
+          "is_visual_checkpoint": false
+        }
+      ],
+      "global_variables": ["keyword"],
+      "variable_sets": [
+        {"keyword": "蓝牙耳机"}
+      ]
+    }
+  ]
+}
+```
+
+---
+
+现在请解析用户提供的文档，严格按照上述格式输出。"""
 
 
 class IngestionService:
@@ -73,129 +206,117 @@ class IngestionService:
 				model=Config.LLM_MODEL,
 				api_key=Config.LLM_API_KEY,
 				base_url=Config.LLM_BASE_URL,
-				temperature=0.2,
+				temperature=0.1,
 			)
 		return self._llm
 
 	def _validate_placeholders(self, text: str) -> list[str]:
-		"""
-		Validate that all placeholders in text are properly closed.
-
-		Returns list of validation errors (empty if valid).
-		"""
+		"""Check for unclosed or empty placeholders. Returns list of error messages."""
 		errors = []
-
-		# Check for unclosed placeholders (text with { but no proper closing })
-		# Pattern: { followed by any non-} characters, then end of string
 		if re.search(r"\{[^}]*$", text):
 			errors.append("Unclosed placeholder detected")
-
-		# Check for empty braces {}
 		if re.search(r"\{\}", text):
 			errors.append("Empty placeholder: {}")
-
 		return errors
 
-	def _validate_test_case(self, test_case: TestCaseSchema) -> list[str]:
-		"""
-		Validate a parsed TestCaseSchema.
-
-		Returns list of validation errors (empty if valid).
-		"""
+	def _validate_plan(self, plan: TestPlanParsedSchema) -> list[str]:
+		"""Validate all cases in a parsed plan. Returns list of error messages."""
 		errors = []
-
-		# Validate all placeholders in step descriptions
-		for step in test_case.steps:
-			placeholder_errors = self._validate_placeholders(step.action_description)
-			errors.extend([f"Step {step.step_number} action: {e}" for e in placeholder_errors])
-
-			# Validate expected_result only if it exists
-			if step.expected_result is not None:
-				placeholder_errors = self._validate_placeholders(step.expected_result)
-				errors.extend([f"Step {step.step_number} expected_result: {e}" for e in placeholder_errors])
-
+		for case in plan.test_cases:
+			for step in case.steps:
+				for err in self._validate_placeholders(step.action_description):
+					errors.append(f"[{case.case_name}] Step {step.step_number} action: {err}")
+				if step.expected_result:
+					for err in self._validate_placeholders(step.expected_result):
+						errors.append(f"[{case.case_name}] Step {step.step_number} expected_result: {err}")
 		return errors
 
-	def _extract_variables_from_text(self, text: str|None) -> list[str]:
-		"""
-		Extract variable names from placeholder patterns in text.
-
-		Returns list of unique variable names (without braces).
-		"""
+	def _extract_vars(self, text: str | None) -> list[str]:
+		"""Extract variable names from {placeholder} patterns in text."""
 		if not text:
 			return []
-		placeholder_pattern = r'\{([a-zA-Z_][a-zA-Z0-9_]*)\}'
-		return list(set(re.findall(placeholder_pattern, text)))
+		return list(set(re.findall(r'\{([a-zA-Z_][a-zA-Z0-9_]*)\}', text)))
+
+	def _reconcile_variables(self, plan: TestPlanParsedSchema) -> TestPlanParsedSchema:
+		"""
+		Reconcile global_variables and step_variables with actual placeholders found
+		in action_description and expected_result. Source of truth is the text content.
+		"""
+		reconciled_cases: list[TestCaseParsedSchema] = []
+		for case in plan.test_cases:
+			all_vars: list[str] = []
+			reconciled_steps = []
+			for step in case.steps:
+				extracted = (
+					self._extract_vars(step.action_description)
+					+ self._extract_vars(step.expected_result)
+				)
+				all_vars.extend(extracted)
+				reconciled_steps.append(step.model_copy(update={
+					"step_variables": sorted(set(extracted)),
+				}))
+			reconciled_cases.append(case.model_copy(update={
+				"steps": reconciled_steps,
+				"global_variables": sorted(set(all_vars)),
+			}))
+		return plan.model_copy(update={"test_cases": reconciled_cases})
 
 	async def parse_markdown(
 		self,
 		markdown_content: str,
 		skip_validation: bool = False,
-	) -> TestCaseSchema:
+	) -> TestPlanParsedSchema:
 		"""
-		Parse markdown content into structured test case using LLM.
+		Parse markdown content into a structured test plan using LLM.
+
+		One LLM call handles extraction, variable substitution, and case merging.
 
 		Args:
 			markdown_content: Flattened markdown text from document
 			skip_validation: Skip placeholder validation (for testing)
 
 		Returns:
-			Structured TestCaseSchema
+			TestPlanParsedSchema with list of TestCaseParsedSchema
 
 		Raises:
-			ValueError: If parsing fails or validation errors after retries
+			ValueError: If parsing fails after retries
 		"""
 		llm = self._get_llm()
-		content_preview = markdown_content[:200] + "..." if len(markdown_content) > 200 else markdown_content
-		logger.info(f"Parsing markdown content: {content_preview}")
+		preview = markdown_content[:200] + "..." if len(markdown_content) > 200 else markdown_content
+		logger.info(f"Parsing markdown ({len(markdown_content)} chars): {preview}")
 
 		messages = [
-			SystemMessage(content=TEST_CASE_EXTRACTION_PROMPT),
+			SystemMessage(content=TEST_PLAN_EXTRACTION_PROMPT),
 			UserMessage(content=markdown_content),
 		]
 
-		# Try parsing with retry for malformed output
 		last_error: Exception | None = None
 		for attempt in range(self.MAX_RETRIES + 1):
 			try:
-				logger.info(f"LLM invocation attempt {attempt + 1}/{self.MAX_RETRIES + 1}")
-				response = await llm.ainvoke(messages, output_format=TestCaseSchema)
-				test_case = response.completion
-				logger.info(f"LLM response received: case_name={test_case.case_name}, steps_count={len(test_case.steps)}")
+				logger.info(f"LLM attempt {attempt + 1}/{self.MAX_RETRIES + 1}")
+				response = await llm.ainvoke(messages, output_format=TestPlanParsedSchema)
+				plan = response.completion
+				logger.info(f"LLM returned {len(plan.test_cases)} cases")
 
-				# Validate placeholders
 				if not skip_validation:
-					validation_errors = self._validate_test_case(test_case)
-					if validation_errors:
-						logger.warning(f"Placeholder validation failed: {validation_errors}")
+					errors = self._validate_plan(plan)
+					if errors:
+						logger.warning(f"Validation errors: {errors}")
 						if attempt < self.MAX_RETRIES:
-							# Retry with error feedback
 							messages = [
-								SystemMessage(content=TEST_CASE_EXTRACTION_PROMPT),
-								UserMessage(
-									content=(
-										f"Previous attempt had errors:\n"
-										f"{chr(10).join(validation_errors)}\n\n"
-										f"Please correct and re-parse:\n{markdown_content}"
-									)
-								),
+								SystemMessage(content=TEST_PLAN_EXTRACTION_PROMPT),
+								UserMessage(content=(
+									f"上次输出存在以下错误，请修正后重新解析：\n"
+									f"{chr(10).join(errors)}\n\n"
+									f"原始文档：\n{markdown_content}"
+								)),
 							]
 							continue
-						else:
-							raise ValueError(f"Placeholder validation failed after {self.MAX_RETRIES} retries: {validation_errors}")
+						raise ValueError(f"Validation failed after {self.MAX_RETRIES} retries: {errors}")
 
-				# Ensure global_variables are consistent with actual placeholders used
-				all_step_vars = []
-				for step in test_case.steps:
-					all_step_vars.extend(self._extract_variables_from_text(step.action_description))
-					all_step_vars.extend(self._extract_variables_from_text(step.expected_result))
-					step.step_variables = list(set(step.step_variables))
-
-				# Update global_variables to be the union of all extracted variables
-				test_case.global_variables = sorted(list(set(all_step_vars)))
-
-				logger.info(f"Successfully parsed test case: {test_case.case_name}, global_variables={test_case.global_variables}")
-				return test_case
+				plan = self._reconcile_variables(plan)
+				logger.info(f"Parsed plan: {[c.case_name for c in plan.test_cases]}")
+				return plan
 
 			except Exception as e:
 				last_error = e
@@ -203,59 +324,51 @@ class IngestionService:
 				if attempt < self.MAX_RETRIES:
 					continue
 
-		raise ValueError(f"Failed to parse test case after {self.MAX_RETRIES + 1} attempts: {last_error}")
+		raise ValueError(f"Failed to parse after {self.MAX_RETRIES + 1} attempts: {last_error}")
 
 	async def ingest_file(
 		self,
 		file_name: str,
 		file_content: bytes,
-	) -> TestCaseSchema:
+	) -> TestPlanParsedSchema:
 		"""
-		Ingest a document file and parse into structured test case.
+		Ingest a document file and parse into a structured test plan.
 
 		Args:
 			file_name: Original file name with extension
 			file_content: Raw file bytes
 
 		Returns:
-			Structured TestCaseSchema
+			TestPlanParsedSchema
 
 		Raises:
-			ValueError: If file type not supported or parsing fails
+			ValueError: If file type not supported, too large, or parsing fails
 		"""
 		logger.info(f"Ingesting file: {file_name}, size={len(file_content)} bytes")
 
-		# Check file size
 		if len(file_content) > self.MAX_FILE_SIZE:
-			raise ValueError(f"File size exceeds maximum of {self.MAX_FILE_SIZE // (1024*1024)}MB")
+			raise ValueError(f"File size exceeds maximum of {self.MAX_FILE_SIZE // (1024 * 1024)}MB")
 
-		# Check if supported
 		if not document_flattener.is_supported(file_name):
 			raise ValueError(
-				f"Unsupported file type: {file_name}. Supported types: .xlsx, .xls, .md, .markdown"
+				f"Unsupported file type: {file_name}. Supported: .xlsx, .xls, .md, .markdown"
 			)
 
-		# Flatten document
 		markdown = document_flattener.flatten(file_name, file_content)
-		logger.debug(f"Document flattened successfully, markdown length={len(markdown)}")
-
-		# Parse with LLM
+		logger.debug(f"Document flattened, markdown length={len(markdown)}")
 		return await self.parse_markdown(markdown)
 
-	async def ingest_markdown(
-		self,
-		markdown_content: str,
-	) -> TestCaseSchema:
+	async def ingest_markdown(self, markdown_content: str) -> TestPlanParsedSchema:
 		"""
-		Ingest markdown content directly and parse into structured test case.
+		Ingest markdown content directly and parse into a structured test plan.
 
 		Args:
 			markdown_content: Raw markdown text
 
 		Returns:
-			Structured TestCaseSchema
+			TestPlanParsedSchema
 		"""
-		logger.info(f"Ingesting markdown content, length={len(markdown_content)}")
+		logger.info(f"Ingesting markdown, length={len(markdown_content)}")
 		return await self.parse_markdown(markdown_content)
 
 

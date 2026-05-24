@@ -76,7 +76,7 @@ class IngestionRequest(BaseModel):
 
 
 class IngestionResponse(BaseModel):
-	"""Response model for successful test case ingestion."""
+	"""Response model for successful test case ingestion (single case, legacy)."""
 
 	success: bool = True
 	case_name: str
@@ -113,3 +113,12 @@ class TestPlanParsedSchema(BaseModel):
 	model_config = ConfigDict(extra='forbid')
 
 	test_cases: list[TestCaseParsedSchema] = Field(..., description="解析出的用例列表")
+
+
+class PlanIngestionResponse(BaseModel):
+	"""Response model for successful plan ingestion (multi-case)."""
+
+	success: bool = True
+	test_cases: list[TestCaseParsedSchema]
+	total_cases: int
+	raw_markdown: str | None = Field(None, description="The flattened markdown text used for LLM parsing")

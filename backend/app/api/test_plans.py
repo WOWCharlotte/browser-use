@@ -36,24 +36,12 @@ async def upload_test_plan(
 	name: str = Form(...),
 	max_concurrency: int = Form(default=3),
 ):
-	"""Upload a file (Excel/Markdown) and parse it into a test plan."""
-	from app.models.ingestion import TestCaseParsedSchema, TestPlanParsedSchema
+	"""Upload a file (Excel/Markdown), parse all test cases, and create a test plan."""
 	from app.services.ingestion_service import ingestion_service
 
 	try:
 		file_content = await file.read()
-		# Use existing ingestion service to parse the file
-		parsed_single = await ingestion_service.ingest_file(file.filename or "upload", file_content)
-
-		# Wrap single TestCaseSchema into TestPlanParsedSchema
-		parsed_case = TestCaseParsedSchema(
-			case_name=parsed_single.case_name,
-			start_url=parsed_single.start_url,
-			steps=parsed_single.steps,
-			global_variables=parsed_single.global_variables,
-			variable_sets=[{}],
-		)
-		parsed_plan = TestPlanParsedSchema(test_cases=[parsed_case])
+		parsed_plan = await ingestion_service.ingest_file(file.filename or "upload", file_content)
 
 		detail = await test_plan_service.import_parsed_plan(
 			parsed=parsed_plan,
