@@ -19,7 +19,7 @@ export function BrowserPreview({ state, currentIndex = 0, totalCount = 1, onPrev
 	const canGoNext = currentIndex < totalCount - 1;
 
 	return (
-		<div className="flex flex-col h-full bg-white">
+		<div className="flex flex-col h-full min-h-0 bg-white overflow-hidden">
 			<BrowserChrome
 				url={state.url}
 				onNavigate={onNavigate}
