@@ -1,20 +1,22 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { ChatWindow } from "@/components/chat/ChatWindow";
 import { AgentControlBar } from "@/components/chat/AgentControlBar";
-import { BrowserPreview } from "@/components/browser/BrowserPreview";
+import { TestingPanel } from "@/components/testing/TestingPanel";
 import { Sidebar } from "@/components/sidebar/Sidebar";
 import { useStateSnapshot } from "@/hooks/useStateSnapshot";
 import { fetchBrowserStates } from "@/lib/api";
 import { BrowserState } from "@/types";
+import type { TestingSnapshot } from "@/types/testing";
 
 export default function Home() {
 	const [browserState, setBrowserState] = useState({ url: "", title: "", screenshot: undefined as string | undefined });
 	const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 	const [currentIndex, setCurrentIndex] = useState<number | null>(null);
 	const [combinedHistory, setCombinedHistory] = useState<BrowserState[]>([]);
-	const { history } = useStateSnapshot();
+	const [testingSnapshot, setTestingSnapshot] = useState<TestingSnapshot | undefined>(undefined);
+	const { snapshot, history } = useStateSnapshot();
 
 	// 1. Load historical browser states from SQLite when session changes
 	useEffect(() => {
@@ -110,6 +112,31 @@ export default function Home() {
 		setCurrentSessionId(sessionId);
 	};
 
+	// 3. Sync testing snapshot from agent state
+	useEffect(() => {
+		if (!snapshot) {
+			setTestingSnapshot(undefined);
+			return;
+		}
+		const panelMode = snapshot.panel_mode as string | undefined;
+		if (panelMode && panelMode !== "browser") {
+			setTestingSnapshot(snapshot as unknown as TestingSnapshot);
+		} else {
+			setTestingSnapshot(undefined);
+		}
+	}, [snapshot]);
+
+	const handlePlanUpdate = useCallback(
+		(plan: NonNullable<TestingSnapshot["test_plan"]>) => {
+			setTestingSnapshot((prev) => (prev ? { ...prev, test_plan: plan } : prev));
+		},
+		[],
+	);
+
+	const handleConfirm = useCallback(() => {
+		setTestingSnapshot(undefined);
+	}, []);
+
 	return (
 		<div className="grid grid-cols-[240px_440px_1fr] h-dvh">
 			<Sidebar currentSessionId={currentSessionId} onSessionChange={handleSessionChange} />
@@ -117,12 +144,15 @@ export default function Home() {
 				{currentSessionId && <AgentControlBar sessionId={currentSessionId} />}
 				<ChatWindow sessionId={currentSessionId || undefined} />
 			</div>
-			<BrowserPreview
-				state={browserState}
+			<TestingPanel
+				snapshot={testingSnapshot}
+				browserState={browserState}
 				currentIndex={currentIndex ?? undefined}
 				totalCount={combinedHistory.length}
 				onPrev={handlePrevScreenshot}
 				onNext={handleNextScreenshot}
+				onConfirm={handleConfirm}
+				onPlanUpdate={handlePlanUpdate}
 			/>
 		</div>
 	);

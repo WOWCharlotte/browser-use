@@ -10,7 +10,7 @@ import logging
 import re
 
 from app.config import Config
-from app.models.ingestion import TestPlanParsedSchema
+from app.models.ingestion import TestCaseParsedSchema, TestPlanParsedSchema
 from app.services.document_flattening import document_flattener
 from browser_use.llm.messages import SystemMessage, UserMessage
 from browser_use.llm.openai.chat import ChatOpenAI
