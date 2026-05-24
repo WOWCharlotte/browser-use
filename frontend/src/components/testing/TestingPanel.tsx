@@ -43,10 +43,18 @@ export function TestingPanel({
   const mode = snapshot?.panel_mode ?? "browser";
 
   if (mode === "case_editor" && snapshot?.test_plan) {
+    // #10: Guard against empty/invalid plan or missing sessionId (#11)
+    if (!sessionId) {
+      return (
+        <div className="flex flex-col h-full items-center justify-center text-sm text-red-500 bg-white">
+          <p>会话 ID 无效，无法编辑测试计划</p>
+        </div>
+      );
+    }
     return (
       <TestCaseEditor
         plan={snapshot.test_plan}
-        sessionId={sessionId ?? ""}
+        sessionId={sessionId}
         onConfirm={onConfirm ?? (() => {})}
         onCancel={onCancel ?? (() => {})}
         onPlanUpdate={onPlanUpdate ?? (() => {})}

@@ -3,6 +3,7 @@
 import { useState, useCallback, useRef } from "react";
 import type { TestPlanDetailView, TestCaseView, TestStepView, VariableSetView } from "@/types/testing";
 import {
+  createTestCase,
   updateTestCase,
   deleteTestCase,
   confirmTestPlan,
@@ -44,18 +45,49 @@ interface CaseError {
   emptyName?: boolean;
   emptyUrl?: boolean;
   invalidUrl?: boolean;
+  noSteps?: boolean;
+  emptyStepDescriptions?: number[];  // step indices with empty action_description
   missingVarSets: boolean;
+  missingVarCols?: boolean;  // steps reference vars but no columns defined at all
   missingVars: string[];
   extraVars: string[];
   emptyVarValues: string[];  // variable names that have empty values in saved sets
 }
+
+/** Validate port is 1-65535 */
+function isValidPort(portStr: string): boolean {
+  const n = Number(portStr);
+  return Number.isInteger(n) && n >= 1 && n <= 65535;
+}
+
+const URL_RE = /^https?:\/\/[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*(\:(\d{1,5}))?(\/.*)?$/;
 
 function validateCase(c: TestCaseView, savedSets: VariableSetView[], varCols: string[]): CaseError | null {
   const required = stepsVars(c);
   const cols = new Set(varCols);
   const emptyName = !c.case_name.trim();
   const emptyUrl = !c.start_url.trim();
-  const invalidUrl = !emptyUrl && !/^https?:\/\/[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*(\:\d{1,5})?(\/.*)?$/.test(c.start_url.trim());
+
+  // URL validation: regex + port range check
+  let invalidUrl = false;
+  if (!emptyUrl) {
+    const match = URL_RE.exec(c.start_url.trim());
+    if (!match) {
+      invalidUrl = true;
+    } else if (match[5]) {
+      // match[5] is the port digits
+      invalidUrl = !isValidPort(match[5]);
+    }
+  }
+
+  // Steps validation
+  const noSteps = c.steps.length === 0;
+  const emptyStepDescriptions = c.steps
+    .map((s, i) => (!s.action_description.trim() ? i : -1))
+    .filter((i) => i >= 0);
+
+  // Variable validation
+  const missingVarCols = required.size > 0 && cols.size === 0;
   const missingVarSets = cols.size > 0 && savedSets.length === 0;
   const missingVars = [...required].filter((v) => !cols.has(v));
   const extraVars = [...cols].filter((v) => !required.has(v));
@@ -69,8 +101,12 @@ function validateCase(c: TestCaseView, savedSets: VariableSetView[], varCols: st
     }
   }
 
-  if (!emptyName && !emptyUrl && !invalidUrl && !missingVarSets && missingVars.length === 0 && extraVars.length === 0 && emptyVarValues.length === 0) return null;
-  return { emptyName, emptyUrl, invalidUrl, missingVarSets, missingVars, extraVars, emptyVarValues };
+  const hasError = emptyName || emptyUrl || invalidUrl || noSteps ||
+    emptyStepDescriptions.length > 0 || missingVarCols || missingVarSets ||
+    (missingVars.length > 0 && !missingVarCols) || extraVars.length > 0 || emptyVarValues.length > 0;
+
+  if (!hasError) return null;
+  return { emptyName, emptyUrl, invalidUrl, noSteps, emptyStepDescriptions, missingVarCols, missingVarSets, missingVars, extraVars, emptyVarValues };
 }
 
 function validateVarName(name: string): string | null {
@@ -218,6 +254,28 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
     }
   };
 
+  // ── add case ──────────────────────────────────────────────────────────────
+
+  const [addingCase, setAddingCase] = useState(false);
+
+  const handleAddCase = async () => {
+    setAddingCase(true);
+    setError(null);
+    try {
+      const newCase = await createTestCase(localPlan.id, {
+        case_name: "新测试用例",
+        start_url: "https://",
+        steps: [{ step_number: 1, action_description: "", expected_result: null, step_variables: [], is_visual_checkpoint: false }],
+      });
+      setLocalPlan((prev) => ({ ...prev, cases: [...prev.cases, newCase] }));
+      setSelectedCaseId(newCase.id);
+    } catch (e) {
+      setError(`添加用例失败: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setAddingCase(false);
+    }
+  };
+
   // ── steps ─────────────────────────────────────────────────────────────────
 
   const applySteps = (caseId: string, steps: TestStepView[]) => {
@@ -271,7 +329,7 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
     const name = (newColName[caseId] ?? "").trim();
     const err = validateVarName(name);
     if (err) { setNewColError(err); return; }
-    const existing = getVarCols(plan.cases.find((c) => c.id === caseId)!);
+    const existing = getVarCols(localPlan.cases.find((c) => c.id === caseId)!);
     if (existing.includes(name)) { setNewColError("变量名已存在"); return; }
     setNewColError(null);
     setCustomVarCols((prev) => ({ ...prev, [caseId]: [...(prev[caseId] ?? []), name] }));
@@ -319,6 +377,18 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
         return { ...rest, [newName]: val ?? "" };
       }),
     }));
+    // #8: Rename key in saved variable sets cache
+    setVariableSets((prev) => {
+      const sets = prev[caseId];
+      if (!sets || sets.length === 0) return prev;
+      return {
+        ...prev,
+        [caseId]: sets.map((vs) => {
+          const { [oldName]: val, ...rest } = vs.variables;
+          return { ...vs, variables: { ...rest, [newName]: val ?? "" } };
+        }),
+      };
+    });
     setEditingCol(null);
     setEditColError(null);
   };
@@ -380,6 +450,17 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
       return;
     }
 
+    // #9: Reject rows with any individual empty value
+    const partialEmptyRows: number[] = [];
+    rows.forEach((row, idx) => {
+      const hasEmpty = Object.values(row).some((v) => !v.trim());
+      if (hasEmpty) partialEmptyRows.push(idx);
+    });
+    if (partialEmptyRows.length > 0) {
+      setError(`第 ${partialEmptyRows.map((i) => i + 1).join(", ")} 行存在空值，请填写完整后再保存`);
+      return;
+    }
+
     setError(null);
     setSavingVars(true);
     try {
@@ -398,9 +479,45 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
   // ── confirm / cancel ───────────────────────────────────────────────────────
 
   const handleConfirm = async () => {
+    // #1: Empty plan guard
+    if (localPlan.cases.length === 0) {
+      setError("测试计划中没有用例，请至少添加一个用例后再确认");
+      return;
+    }
+    // #11: sessionId guard
+    if (!sessionId) {
+      setError("会话 ID 无效，无法确认计划");
+      return;
+    }
+
+    // #5: Load variable sets for any cases not yet fetched
+    const unloadedCaseIds = localPlan.cases
+      .filter((c) => variableSets[c.id] === undefined)
+      .map((c) => c.id);
+    if (unloadedCaseIds.length > 0) {
+      try {
+        const loaded: Record<string, VariableSetView[]> = {};
+        await Promise.all(unloadedCaseIds.map(async (cid) => {
+          const sets = await getVariableSets(cid);
+          loaded[cid] = sets;
+        }));
+        setVariableSets((prev) => ({ ...prev, ...loaded }));
+        // Use merged data for validation below
+        const mergedVarSets = { ...variableSets, ...loaded };
+        return doValidateAndConfirm(mergedVarSets);
+      } catch (e) {
+        setError(`加载变量集失败: ${e instanceof Error ? e.message : String(e)}`);
+        return;
+      }
+    }
+
+    return doValidateAndConfirm(variableSets);
+  };
+
+  const doValidateAndConfirm = async (allVarSets: Record<string, VariableSetView[]>) => {
     const errors: Record<string, CaseError> = {};
     for (const c of localPlan.cases) {
-      const err = validateCase(c, variableSets[c.id] ?? [], getVarCols(c));
+      const err = validateCase(c, allVarSets[c.id] ?? [], getVarCols(c));
       if (err) errors[c.id] = err;
     }
     if (Object.keys(errors).length > 0) {
@@ -410,9 +527,12 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
         const parts: string[] = [];
         if (err.emptyName) parts.push("用例名称不能为空");
         if (err.emptyUrl) parts.push("起始 URL 不能为空");
-        if (err.invalidUrl) parts.push("起始 URL 格式无效（需为合法的 http(s)://域名 格式）");
-        if (err.missingVarSets) parts.push("缺少变量集");
-        if (err.missingVars.length > 0) parts.push(`步骤变量 {${err.missingVars.join("}, {")}} 未在变量集中定义`);
+        if (err.invalidUrl) parts.push("起始 URL 格式无效（需为合法的 http(s)://域名 格式，端口范围 1-65535）");
+        if (err.noSteps) parts.push("至少需要一个测试步骤");
+        if (err.emptyStepDescriptions && err.emptyStepDescriptions.length > 0) parts.push(`步骤 ${err.emptyStepDescriptions.map((i) => i + 1).join(", ")} 的操作描述不能为空`);
+        if (err.missingVarCols) parts.push("步骤中引用了变量但未定义变量列，请先添加变量列");
+        if (err.missingVarSets) parts.push("已定义变量列但缺少变量集数据");
+        if (err.missingVars.length > 0 && !err.missingVarCols) parts.push(`步骤变量 {${err.missingVars.join("}, {")}} 未在变量集中定义`);
         if (err.extraVars.length > 0) parts.push(`变量集列 ${err.extraVars.join(", ")} 未在步骤中使用`);
         if (err.emptyVarValues.length > 0) parts.push(`变量 ${err.emptyVarValues.join(", ")} 存在空值`);
         return `「${name}」：${parts.join("；")}`;
@@ -510,6 +630,14 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
             );
           })}
           {localPlan.cases.length === 0 && <p className="px-3 py-4 text-xs text-gray-400 text-center">暂无用例</p>}
+          <button
+            type="button"
+            onClick={handleAddCase}
+            disabled={addingCase}
+            className="w-full px-3 py-2.5 text-xs text-blue-600 hover:bg-blue-50 border-t border-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {addingCase ? "添加中…" : "+ 添加用例"}
+          </button>
         </div>
 
         {/* Case detail */}
