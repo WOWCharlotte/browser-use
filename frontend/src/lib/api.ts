@@ -288,3 +288,11 @@ export async function importVariableSets(
 	});
 	return _checkOk(res) as Promise<VariableSetView[]>;
 }
+
+export async function resumeAgentSession(sessionId: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/agui/resume/${sessionId}`, { method: "POST" });
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({ error: "Unknown error" }));
+		throw new Error(body.error ?? body.reason ?? `HTTP ${res.status}`);
+	}
+}

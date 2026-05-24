@@ -2,15 +2,16 @@
 
 import { useState, useCallback, useRef } from "react";
 import type { TestPlanDetailView, TestCaseView, TestStepView, VariableSetView } from "@/types/testing";
-import { updateTestCase, confirmTestPlan, getVariableSets, importVariableSets } from "@/lib/api";
+import { updateTestCase, confirmTestPlan, getVariableSets, importVariableSets, resumeAgentSession } from "@/lib/api";
 
 interface Props {
   plan: TestPlanDetailView;
+  sessionId: string;
   onConfirm: () => void;
   onPlanUpdate: (plan: TestPlanDetailView) => void;
 }
 
-export function TestCaseEditor({ plan, onConfirm, onPlanUpdate }: Props) {
+export function TestCaseEditor({ plan, sessionId, onConfirm, onPlanUpdate }: Props) {
   const [selectedCaseId, setSelectedCaseId] = useState<string>(plan.cases[0]?.id ?? "");
   const [variableSets, setVariableSets] = useState<Record<string, VariableSetView[]>>({});
   const [savingCaseId, setSavingCaseId] = useState<string | null>(null);
@@ -158,7 +159,10 @@ export function TestCaseEditor({ plan, onConfirm, onPlanUpdate }: Props) {
     setConfirming(true);
     setError(null);
     try {
+      // 1. 将计划状态写入 DB（draft → confirmed）
       await confirmTestPlan(plan.id);
+      // 2. 唤醒后端挂起的 event_generator，让 SSE 流继续
+      await resumeAgentSession(sessionId);
       onConfirm();
     } catch (e) {
       setError(`确认失败: ${e instanceof Error ? e.message : String(e)}`);

@@ -146,6 +146,7 @@ export default function Home() {
 			</div>
 			<TestingPanel
 				snapshot={testingSnapshot}
+				sessionId={currentSessionId}
 				browserState={browserState}
 				currentIndex={currentIndex ?? undefined}
 				totalCount={combinedHistory.length}
