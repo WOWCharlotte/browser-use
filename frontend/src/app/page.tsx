@@ -137,6 +137,10 @@ export default function Home() {
 		setTestingSnapshot(undefined);
 	}, []);
 
+	const handleCancel = useCallback(() => {
+		setTestingSnapshot(undefined);
+	}, []);
+
 	return (
 		<div className="grid grid-cols-[240px_440px_1fr] h-dvh">
 			<Sidebar currentSessionId={currentSessionId} onSessionChange={handleSessionChange} />
@@ -153,6 +157,7 @@ export default function Home() {
 				onPrev={handlePrevScreenshot}
 				onNext={handleNextScreenshot}
 				onConfirm={handleConfirm}
+				onCancel={handleCancel}
 				onPlanUpdate={handlePlanUpdate}
 			/>
 		</div>

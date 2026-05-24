@@ -20,6 +20,7 @@ interface Props {
   onRefresh?: () => void;
   // Testing callbacks
   onConfirm?: () => void;
+  onCancel?: () => void;
   onPlanUpdate?: (plan: NonNullable<TestingSnapshot["test_plan"]>) => void;
 }
 
@@ -36,6 +37,7 @@ export function TestingPanel({
   onForward,
   onRefresh,
   onConfirm,
+  onCancel,
   onPlanUpdate,
 }: Props) {
   const mode = snapshot?.panel_mode ?? "browser";
@@ -46,6 +48,7 @@ export function TestingPanel({
         plan={snapshot.test_plan}
         sessionId={sessionId ?? ""}
         onConfirm={onConfirm ?? (() => {})}
+        onCancel={onCancel ?? (() => {})}
         onPlanUpdate={onPlanUpdate ?? (() => {})}
       />
     );
