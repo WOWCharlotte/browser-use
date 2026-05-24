@@ -5,6 +5,9 @@ AG-UI Protocol HTTP Agent Endpoint
 支持 SSE 流式输出事件。
 """
 import asyncio
+import base64
+import logging
+from dataclasses import dataclass
 from typing import Any, AsyncGenerator
 
 from ag_ui.core import (
@@ -25,17 +28,72 @@ from ag_ui.core import (
     ToolCallResultEvent,
     ToolCallStartEvent,
 )
-from ag_ui.core.types import TextInputContent
+from ag_ui.core.types import DocumentInputContent, InputContentDataSource, TextInputContent
 from ag_ui.encoder import EventEncoder
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from app.utils import uuid7str
 
+logger = logging.getLogger(__name__)
+
 # Note: InterruptEvent and ResumeEvent are not in ag_ui.core yet
 # Using CustomEvent or raw event fallback for HITL if needed
 
 router = APIRouter()
+
+
+# ============================================================================
+# 附件提取
+# ============================================================================
+
+@dataclass
+class ExtractedInput:
+    text: str
+    attachments: list[tuple[str, bytes, str]]  # (filename, content_bytes, mime_type)
+
+
+def extract_input(input_data: RunAgentInput) -> ExtractedInput:
+    """从最后一条 user 消息中提取文本和文件附件。"""
+    text = ""
+    attachments: list[tuple[str, bytes, str]] = []
+
+    if not input_data.messages:
+        return ExtractedInput(text=text, attachments=attachments)
+
+    last_msg = input_data.messages[-1]
+    if not (hasattr(last_msg, "role") and last_msg.role == "user"):
+        return ExtractedInput(text=text, attachments=attachments)
+
+    content = getattr(last_msg, "content", "")
+    if isinstance(content, str):
+        return ExtractedInput(text=content, attachments=attachments)
+
+    for part in content:
+        if isinstance(part, TextInputContent):
+            text = part.text
+        elif isinstance(part, DocumentInputContent):
+            source = part.source
+            if not isinstance(source, InputContentDataSource):
+                continue
+            # metadata may carry filename from CopilotKit
+            meta = part.metadata or {}
+            filename: str = (
+                meta.get("filename") or meta.get("name") or "upload"
+            )
+            try:
+                file_bytes = base64.b64decode(source.value)
+            except Exception as exc:
+                logger.warning(f"Failed to decode attachment '{filename}': {exc}")
+                continue
+            attachments.append((filename, file_bytes, source.mime_type))
+
+    return ExtractedInput(text=text, attachments=attachments)
+
+
+# ============================================================================
+# 事件映射
+# ============================================================================
 
 
 # ============================================================================
@@ -134,20 +192,8 @@ def map_agent_event_to_agui(event: dict[str, Any]) -> BaseEvent | None:
 
 
 def extract_task(input_data: RunAgentInput) -> str:
-    """从 messages 提取用户任务"""
-    user_message = ""
-    if input_data.messages and len(input_data.messages) > 0:
-        last_msg = input_data.messages[-1]
-        if hasattr(last_msg, "role") and last_msg.role == "user":
-            message = getattr(last_msg, "content", "")
-            if not isinstance(message, str):
-                for content in message:
-                    if isinstance(content,TextInputContent):
-                        user_message = content.text
-                        break
-            else:
-                user_message = message
-    return user_message
+    """从 messages 提取用户任务文本（向后兼容）。"""
+    return extract_input(input_data).text
 
 
 # ============================================================================
@@ -160,6 +206,7 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
     AG-UI Protocol HTTP Agent Endpoint
 
     接收 RunAgentInput，返回 SSE 流式事件。
+    当消息携带文件附件（Excel/Markdown）时，触发测试用例解析流程。
     """
     from app.services.agent_service import agent_service
     from app.services.browser_service import browser_service
@@ -168,7 +215,10 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
     encoder = EventEncoder(accept=accept_header)
     session_id = input_data.thread_id or uuid7str()
     run_id = input_data.run_id or uuid7str()
-    user_message = extract_task(input_data)
+
+    extracted = extract_input(input_data)
+    user_message = extracted.text
+    attachments = extracted.attachments
 
     # Ensure session and user message are persisted in DB
     from app.services.session_service import session_service
@@ -185,51 +235,72 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
             await session_service.add_message(session_id, "user", user_message)
 
     async def event_generator() -> AsyncGenerator[str, None]:
-        # 发送 RUN_STARTED
-        run_started_event = RunStartedEvent(
-            thread_id=session_id,
-            run_id=run_id,
-        )
-        yield encoder.encode(run_started_event)
+        yield encoder.encode(RunStartedEvent(thread_id=session_id, run_id=run_id))
 
-        # 确保浏览器会话存在
+        # ── 文件附件：触发测试用例解析流程 ──────────────────────────────────
+        if attachments:
+            for chunk in _encode_text(encoder, run_id, "正在解析测试用例文件，请稍候..."):
+                yield chunk
+            try:
+                plan_detail = await _handle_attachments(
+                    attachments=attachments,
+                    plan_name=user_message or attachments[0][0],
+                )
+                case_count = len(plan_detail.cases)
+                for chunk in _encode_text(
+                    encoder, run_id,
+                    f"解析完成，共提取 {case_count} 个测试用例。请在右侧面板确认并编辑后点击「确认计划」。",
+                ):
+                    yield chunk
+                yield encoder.encode(StateSnapshotEvent(
+                    snapshot={
+                        "panel_mode": "case_editor",
+                        "test_plan": plan_detail.model_dump(),
+                    }
+                ))
+            except ValueError as exc:
+                for chunk in _encode_text(encoder, run_id, f"解析失败：{exc}"):
+                    yield chunk
+            except Exception as exc:
+                logger.exception("Unexpected error during attachment ingestion")
+                for chunk in _encode_text(encoder, run_id, "解析时发生内部错误，请重试。"):
+                    yield chunk
+
+            yield encoder.encode(RunFinishedEvent(
+                thread_id=session_id, run_id=run_id, result={"outcome": "ingestion"}
+            ))
+            return
+
+        # ── 普通消息：走 Agent 执行流程 ──────────────────────────────────────
         if session_id not in browser_service._sessions:
             await browser_service.create_session(session_id)
 
-        # 使用 asyncio.Queue 进行事件传递
         event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         agent_task = None
 
         async def on_event(event: dict[str, Any]) -> None:
-            """事件回调 - 线程安全地加入队列"""
             event["run_id"] = run_id
             event["thread_id"] = session_id
             await event_queue.put(event)
 
         try:
-            # 创建 agent 任务
             agent_task = asyncio.create_task(
                 agent_service.run_agent(session_id, user_message, on_event)
             )
 
-            # Yield 事件直到完成
             while not agent_task.done():
                 try:
                     event = await asyncio.wait_for(event_queue.get(), timeout=30.0)
-
-                    # 映射为 AG-UI 事件并编码
                     agui_event = map_agent_event_to_agui(event)
                     if agui_event is not None:
                         yield encoder.encode(agui_event)
                 except asyncio.TimeoutError:
-                    # 发送心跳 - 使用原始事件格式
                     heartbeat_event = {"type": "HEARTBEAT", "value": {"run_id": run_id}}
                     agui_event = map_agent_event_to_agui(heartbeat_event)
                     if agui_event is not None:
                         yield encoder.encode(agui_event)
                     continue
 
-            # 处理剩余事件
             while not event_queue.empty():
                 try:
                     event = event_queue.get_nowait()
@@ -240,21 +311,13 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
                     break
 
         except Exception as e:
-            error_event = RunErrorEvent(
-                message=str(e),
-            )
-            yield encoder.encode(error_event)
+            yield encoder.encode(RunErrorEvent(message=str(e)))
         finally:
             if agent_task and not agent_task.done():
                 agent_task.cancel()
-
-            # 发送 RUN_FINISHED
-            finished_event = RunFinishedEvent(
-                thread_id=session_id,
-                run_id=run_id,
-                result={"outcome": "success"},
-            )
-            yield encoder.encode(finished_event)
+            yield encoder.encode(RunFinishedEvent(
+                thread_id=session_id, run_id=run_id, result={"outcome": "success"}
+            ))
 
     return StreamingResponse(
         event_generator(),
@@ -265,3 +328,37 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ============================================================================
+# 附件处理辅助函数
+# ============================================================================
+
+async def _handle_attachments(
+    attachments: list[tuple[str, bytes, str]],
+    plan_name: str,
+) -> Any:
+    """解析第一个支持的文件附件，创建测试计划并返回 TestPlanDetailView。"""
+    from app.services.ingestion_service import ingestion_service
+    from app.services.test_plan_service import test_plan_service
+
+    filename, file_bytes, _mime = attachments[0]
+    logger.info(f"Ingesting attachment: {filename} ({len(file_bytes)} bytes)")
+
+    parsed_plan = await ingestion_service.ingest_file(filename, file_bytes)
+    plan_detail = await test_plan_service.import_parsed_plan(
+        parsed=parsed_plan,
+        name=plan_name or filename,
+        source_file_name=filename,
+    )
+    return plan_detail
+
+
+def _encode_text(encoder: EventEncoder, run_id: str, text: str) -> list[str]:
+    """生成一条完整的 assistant 文本消息事件序列（start + content + end）。"""
+    msg_id = uuid7str()
+    return [
+        encoder.encode(TextMessageStartEvent(message_id=msg_id, role="assistant")),
+        encoder.encode(TextMessageContentEvent(message_id=msg_id, delta=text)),
+        encoder.encode(TextMessageEndEvent(message_id=msg_id)),
+    ]
