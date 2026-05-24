@@ -44,7 +44,16 @@ export function ChatWindow({ sessionId }: Props) {
 
 	return (
 		<div style={{ height, overflow: "hidden" }}>
-			<CopilotChat agentId="default" threadId={sessionId} style={{ height }} />
+			<CopilotChat
+				agentId="default"
+				threadId={sessionId}
+				style={{ height }}
+				attachments={{
+					enabled: true,
+					accept: ".xlsx,.xls,.md,.markdown",
+					maxSize: 5 * 1024 * 1024,
+				}}
+			/>
 		</div>
 	);
 }
