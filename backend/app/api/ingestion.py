@@ -8,7 +8,7 @@ import logging
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
-from app.models.ingestion import IngestionResponse
+from app.models.ingestion import PlanIngestionResponse
 from app.services.ingestion_service import ingestion_service
 
 logger = logging.getLogger(__name__)
@@ -16,16 +16,19 @@ router = APIRouter()
 
 
 @router.post("/ingestion/upload")
-async def ingest_test_case(
+async def ingest_test_plan(
 	file: UploadFile | None = File(None, description="Test case file (.xlsx, .xls, .md, .markdown)"),
 	markdown_content: str | None = Form(None, description="Raw markdown content (alternative to file upload)"),
-) -> IngestionResponse:
+) -> PlanIngestionResponse:
 	"""
-	Parse a test case from file or markdown content.
+	Parse a test plan from file or markdown content.
+
+	Returns all test cases extracted from the document, with steps, variables,
+	and merged variable sets for parameterized cases.
 
 	Accepts either:
 	- File upload: Excel (.xlsx, .xls) or Markdown (.md, .markdown)
-	- Markdown content: Raw markdown text (e.g., from Notion/语雀 copy-paste)
+	- Markdown content: Raw markdown text
 
 	File size limit: 5MB.
 	"""
@@ -33,25 +36,21 @@ async def ingest_test_case(
 		if file is not None:
 			logger.info(f"Received file upload: {file.filename}")
 			content = await file.read()
-			test_case = await ingestion_service.ingest_file(file.filename, content)
-			logger.info(f"Successfully processed file: {file.filename}")
-			return IngestionResponse(
+			plan = await ingestion_service.ingest_file(file.filename, content)
+			logger.info(f"Parsed {len(plan.test_cases)} cases from file: {file.filename}")
+			return PlanIngestionResponse(
 				success=True,
-				case_name=test_case.case_name,
-				start_url=test_case.start_url,
-				steps=test_case.steps,
-				global_variables=test_case.global_variables,
+				test_cases=plan.test_cases,
+				total_cases=len(plan.test_cases),
 			)
 		elif markdown_content is not None:
 			logger.info("Received markdown content submission")
-			test_case = await ingestion_service.ingest_markdown(markdown_content)
-			logger.info("Successfully processed markdown content")
-			return IngestionResponse(
+			plan = await ingestion_service.ingest_markdown(markdown_content)
+			logger.info(f"Parsed {len(plan.test_cases)} cases from markdown")
+			return PlanIngestionResponse(
 				success=True,
-				case_name=test_case.case_name,
-				start_url=test_case.start_url,
-				steps=test_case.steps,
-				global_variables=test_case.global_variables,
+				test_cases=plan.test_cases,
+				total_cases=len(plan.test_cases),
 				raw_markdown=markdown_content,
 			)
 		else:
@@ -62,4 +61,4 @@ async def ingest_test_case(
 		raise HTTPException(status_code=400, detail=str(e))
 	except Exception as e:
 		logger.error(f"Ingestion failed: {e}", exc_info=True)
-		raise HTTPException(status_code=500, detail=f"Ingestion failed: {e}")
+		raise HTTPException(status_code=500, detail="Ingestion failed")
