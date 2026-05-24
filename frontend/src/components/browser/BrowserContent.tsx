@@ -6,15 +6,15 @@ interface Props {
 
 export function BrowserContent({ state }: Props) {
 	return (
-		<div className="flex-1 flex flex-col items-center justify-center gap-4 bg-gray-50">
+		<div className="flex-1 min-h-0 overflow-auto bg-gray-50">
 			{state.screenshot ? (
 				<img
 					src={`data:image/png;base64,${state.screenshot}`}
 					alt={state.title}
-					className="max-w-full max-h-full object-contain"
+					className="w-full h-auto block"
 				/>
 			) : (
-				<>
+				<div className="h-full flex flex-col items-center justify-center gap-4">
 					<div className="w-14 h-14 rounded-xl bg-linear-to-br from-violet-100 to-purple-100 flex items-center justify-center text-violet-500">
 						<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
 							<rect x="2" y="3" width="20" height="14" rx="2" />
@@ -29,7 +29,7 @@ export function BrowserContent({ state }: Props) {
 						<span className="size-1.5 bg-gray-300 rounded-full" />
 						<span className="size-1.5 bg-gray-300 rounded-full" />
 					</div>
-				</>
+				</div>
 			)}
 		</div>
 	);
