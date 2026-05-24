@@ -177,3 +177,12 @@ async def get_variable_sets(case_id: str):
 	"""Get all variable sets for a test case."""
 	sets = await test_plan_service.get_variable_sets(case_id)
 	return {"success": True, "data": [s.model_dump() for s in sets]}
+
+
+@router.delete("/test-cases/variables/{variable_set_id}")
+async def delete_variable_set(variable_set_id: str):
+	"""Delete a single variable set."""
+	deleted = await test_plan_service.delete_variable_set(variable_set_id)
+	if not deleted:
+		return _error("NOT_FOUND", f"Variable set not found: {variable_set_id}", 404)
+	return {"success": True}
