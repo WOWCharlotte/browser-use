@@ -380,6 +380,19 @@ class TestPlanService:
 		finally:
 			await db.close()
 
+	async def delete_variable_set(self, variable_set_id: str) -> bool:
+		"""Delete a single variable set by ID. Returns True if deleted."""
+		db = await get_db()
+		try:
+			result = await db.execute(
+				"DELETE FROM test_case_variable_sets WHERE id = ?",
+				(variable_set_id,),
+			)
+			await db.commit()
+			return result.rowcount > 0
+		finally:
+			await db.close()
+
 	# ── Bulk Import ─────────────────────────────────────────────────────────
 
 	async def import_parsed_plan(
