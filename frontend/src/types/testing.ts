@@ -1,6 +1,9 @@
-// Types for the automated testing tool (Phase 3)
+// Types for the automated testing tool (Phase 3 + Phase 4)
 
 export type PanelMode = "browser" | "case_editor" | "execution" | "report";
+
+export type CaseStatus = "pending" | "running" | "paused" | "passed" | "failed" | "error";
+export type RunStatus = "running" | "completed" | "aborted";
 
 export interface TestStepView {
   step_number: number;
@@ -48,21 +51,28 @@ export interface TestPlanDetailView {
   cases: TestCaseView[];
 }
 
+export interface RunProgress {
+  run_id: string;
+  total: number;
+  completed: number;
+  passed: number;
+  failed: number;
+  error: number;
+  started_at: string;
+  status: RunStatus;
+}
+
+export interface CaseStatusEntry {
+  result_id: string;
+  case_id: string;
+  case_name: string;
+  status: CaseStatus;
+}
+
 export interface TestingSnapshot {
   panel_mode: PanelMode;
   test_plan?: TestPlanDetailView;
-  run_progress?: {
-    run_id: string;
-    total: number;
-    completed: number;
-    passed: number;
-    failed: number;
-  };
-  case_statuses?: Array<{
-    result_id: string;
-    case_id: string;
-    case_name: string;
-    status: "pending" | "running" | "passed" | "failed" | "error";
-  }>;
+  run_progress?: RunProgress;
+  case_statuses?: CaseStatusEntry[];
   report_url?: string;
 }

@@ -84,4 +84,4 @@ product_extraction.py
 plot.py
 
 .claude/
-*.db
+data/**

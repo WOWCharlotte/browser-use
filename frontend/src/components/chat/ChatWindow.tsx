@@ -32,7 +32,7 @@ export function ChatWindow({ sessionId }: Props) {
 			.then((msgs) => {
 				const copilotMsgs = msgs.map((m) => ({
 					id: m.id,
-					role: (m.role === "assistant" || (m.role as string) === "ai" ? "assistant" : "user") as "assistant" | "user",
+					role: ((m.role as string) === "assistant" || (m.role as string) === "ai" ? "assistant" : "user") as "assistant" | "user",
 					content: m.content,
 				}));
 				agent.setMessages(copilotMsgs);

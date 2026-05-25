@@ -26,12 +26,19 @@ async def startup():
 		logger.error(f"Failed to initialize database: {e}")
 		raise
 
+	# Recover residual running states from previous crashes
+	from app.services.test_execution_service import test_execution_service
+	try:
+		await test_execution_service.recover_on_startup()
+		await test_execution_service.cleanup_old_trajectories()
+	except Exception as e:
+		logger.warning(f"Startup recovery warning: {e}")
+
 
 # Import routers after app creation to avoid circular imports
-from app.api import agent, agui, ingestion, sessions, test_plans
+from app.api import agui, sessions, test_plans, test_runs
 
 app.include_router(sessions.router, prefix="/api", tags=["sessions"])
-app.include_router(agent.router, prefix="/api", tags=["agent"])
 app.include_router(agui.router, prefix="/api", tags=["agui"])
-app.include_router(ingestion.router, prefix="/api", tags=["ingestion"])
 app.include_router(test_plans.router, prefix="/api", tags=["test-plans"])
+app.include_router(test_runs.router, prefix="/api", tags=["test-runs"])

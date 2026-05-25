@@ -156,50 +156,6 @@ export async function controlBrowser(
 	return res.json();
 }
 
-export async function pauseAgent(sessionId: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/agent/pause`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ session_id: sessionId }),
-	});
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ detail: "Unknown error" }));
-		throw new Error(error.detail || `HTTP ${res.status}`);
-	}
-}
-
-export async function resumeAgent(sessionId: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/agent/resume`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ session_id: sessionId }),
-	});
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ detail: "Unknown error" }));
-		throw new Error(error.detail || `HTTP ${res.status}`);
-	}
-}
-
-export async function stopAgent(sessionId: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/agent/stop`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ session_id: sessionId }),
-	});
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ detail: "Unknown error" }));
-		throw new Error(error.detail || `HTTP ${res.status}`);
-	}
-}
-
-export async function getAgentStatus(sessionId: string): Promise<string> {
-	const res = await fetch(`${API_BASE}/agent/status/${sessionId}`);
-	if (!res.ok) {
-		throw new Error(`HTTP ${res.status}`);
-	}
-	return (await res.json()).status as string;
-}
-
 export async function fetchBrowserStates(sessionId: string): Promise<BrowserState[]> {
 	const res = await fetch(`${API_BASE}/sessions/${sessionId}/browser_states`);
 	if (!res.ok) {
@@ -309,8 +265,12 @@ export async function deleteVariableSet(variableSetId: string): Promise<void> {
 	}
 }
 
-export async function resumeAgentSession(sessionId: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/agui/resume/${sessionId}`, { method: "POST" });
+export async function resumeAgentSession(sessionId: string, action: "confirm" | "cancel" = "confirm"): Promise<void> {
+	const res = await fetch(`${API_BASE}/agui/resume/${sessionId}`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ action }),
+	});
 	if (!res.ok) {
 		const body = await res.json().catch(() => ({ error: "Unknown error" }));
 		throw new Error(body.error ?? body.reason ?? `HTTP ${res.status}`);

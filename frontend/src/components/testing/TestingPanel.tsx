@@ -4,6 +4,7 @@ import type { TestingSnapshot } from "@/types/testing";
 import type { BrowserState } from "@/types";
 import { BrowserPreview } from "@/components/browser/BrowserPreview";
 import { TestCaseEditor } from "./TestCaseEditor";
+import ExecutionDashboard from "./ExecutionDashboard";
 
 interface Props {
   snapshot: TestingSnapshot | undefined;
@@ -62,12 +63,20 @@ export function TestingPanel({
     );
   }
 
+  if (mode === "execution" && snapshot?.run_progress && snapshot?.case_statuses) {
+    return (
+      <ExecutionDashboard
+        runProgress={snapshot.run_progress}
+        caseStatuses={snapshot.case_statuses}
+      />
+    );
+  }
+
   if (mode === "execution") {
     return (
       <div className="flex flex-col h-full items-center justify-center text-sm text-gray-500 bg-white">
         <div className="animate-pulse text-2xl mb-2">⚙️</div>
         <p>执行中...</p>
-        <p className="text-xs text-gray-400 mt-1">执行仪表板将在 Phase 8 实现</p>
       </div>
     );
   }
@@ -77,7 +86,7 @@ export function TestingPanel({
       <div className="flex flex-col h-full items-center justify-center text-sm text-gray-500 bg-white">
         <div className="text-2xl mb-2">📊</div>
         <p>报告生成中...</p>
-        <p className="text-xs text-gray-400 mt-1">报告面板将在 Phase 8 实现</p>
+        <p className="text-xs text-gray-400 mt-1">报告面板将在 Phase 6 实现</p>
       </div>
     );
   }
