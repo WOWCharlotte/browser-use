@@ -545,7 +545,7 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
     setError(null);
     try {
       await confirmTestPlan(localPlan.id);
-      await resumeAgentSession(sessionId);
+      await resumeAgentSession(sessionId, "confirm");
       onConfirm();
     } catch (e) {
       setError(`确认失败: ${e instanceof Error ? e.message : String(e)}`);
@@ -558,8 +558,8 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
     if (!window.confirm("取消后测试计划将被丢弃，确认取消？")) return;
     setCancelling(true);
     try {
-      // Resume the SSE so the backend doesn't hang, then notify parent
-      await resumeAgentSession(sessionId).catch(() => {});
+      // Resume with cancel action so the backend terminates gracefully
+      await resumeAgentSession(sessionId, "cancel").catch(() => {});
       onCancel();
     } finally {
       setCancelling(false);

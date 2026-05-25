@@ -17,6 +17,7 @@ from ag_ui.core import (
     RunErrorEvent,
     RunFinishedEvent,
     RunStartedEvent,
+    StateDeltaEvent,
     StateSnapshotEvent,
     StepFinishedEvent,
     StepStartedEvent,
@@ -45,6 +46,8 @@ router = APIRouter()
 # ── HITL resume 状态 ──────────────────────────────────────────────────────────
 # session_id → asyncio.Event，解析完成后挂起等待用户确认
 _resume_events: dict[str, asyncio.Event] = {}
+# session_id → resume action ("confirm" | "cancel")
+_resume_actions: dict[str, str] = {}
 
 
 # ============================================================================
@@ -105,7 +108,7 @@ def extract_input(input_data: RunAgentInput) -> ExtractedInput:
 # ============================================================================
 
 def map_agent_event_to_agui(event: dict[str, Any]) -> BaseEvent | None:
-    """将 agent_service 事件映射为 AG-UI 事件"""
+    """将内部事件映射为 AG-UI 协议事件"""
     event_type = event.get("type")
     run_id = event.get("run_id")
     thread_id = event.get("thread_id")
@@ -151,6 +154,10 @@ def map_agent_event_to_agui(event: dict[str, Any]) -> BaseEvent | None:
     elif event_type == "STATE_SNAPSHOT":
         return StateSnapshotEvent(
             snapshot=event.get("state", {}),
+        )
+    elif event_type == "STATE_DELTA":
+        return StateDeltaEvent(
+            delta=event.get("delta", []),
         )
     elif event_type == "TOOL_CALL_START":
         return ToolCallStartEvent(
@@ -212,8 +219,6 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
     接收 RunAgentInput，返回 SSE 流式事件。
     当消息携带文件附件（Excel/Markdown）时，触发测试用例解析流程。
     """
-    from app.services.agent_service import agent_service
-    from app.services.browser_service import browser_service
 
     accept_header = request.headers.get("accept", "*/*")
     encoder = EventEncoder(accept=accept_header)
@@ -251,6 +256,32 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
                     plan_name=user_message or attachments[0][0],
                 )
                 case_count = len(plan_detail.cases)
+
+                if case_count == 0:
+                    # 解析成功但未提取到用例 — 文件内容无效
+                    for chunk in _encode_text(
+                        encoder, run_id,
+                        "未能从上传的文件中提取到有效的测试用例。\n\n"
+                        "有效的测试用例文件应包含以下内容：\n"
+                        "• 用例名称（必填）\n"
+                        "• 起始 URL（必填）\n"
+                        "• 操作步骤（至少一步，描述具体的用户操作）\n"
+                        "• 预期结果（可选，用于自动评估）\n\n"
+                        "支持的格式：Excel（.xlsx）或 Markdown（.md）。\n"
+                        "请检查文件内容后重新上传。",
+                    ):
+                        yield chunk
+                    # 删除空计划
+                    try:
+                        from app.services.test_plan_service import test_plan_service
+                        await test_plan_service.delete_plan(plan_detail.id)
+                    except Exception:
+                        pass
+                    yield encoder.encode(RunFinishedEvent(
+                        thread_id=session_id, run_id=run_id, result={"outcome": "empty_plan"}
+                    ))
+                    return
+
                 for chunk in _encode_text(
                     encoder, run_id,
                     f"解析完成，共提取 {case_count} 个测试用例。请在右侧面板确认并编辑后点击「确认计划」。",
@@ -280,8 +311,67 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
                 finally:
                     _resume_events.pop(session_id, None)
 
-                for chunk in _encode_text(encoder, run_id, "测试计划已确认，可以开始执行。"):
+                # 读取用户动作：confirm 或 cancel
+                resume_action = _resume_actions.pop(session_id, "confirm")
+
+                if resume_action == "cancel":
+                    # 用户取消计划 — 删除 draft 计划并终止
+                    for chunk in _encode_text(encoder, run_id, "测试计划已取消。"):
+                        yield chunk
+                    try:
+                        from app.services.test_plan_service import test_plan_service
+                        await test_plan_service.delete_plan(plan_detail.id)
+                    except Exception as e:
+                        logger.warning(f"Failed to delete cancelled plan: {e}")
+                    yield encoder.encode(RunFinishedEvent(
+                        thread_id=session_id, run_id=run_id, result={"outcome": "cancelled"}
+                    ))
+                    return
+
+                # 确认 → 自动启动执行
+                for chunk in _encode_text(encoder, run_id, "测试计划已确认，正在启动执行..."):
                     yield chunk
+
+                # 启动执行引擎
+                from app.services.test_execution_service import test_execution_service
+
+                exec_event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+                async def on_exec_event_from_ingestion(event: dict[str, Any]) -> None:
+                    event["run_id"] = run_id
+                    event["thread_id"] = session_id
+                    await exec_event_queue.put(event)
+
+                test_run_id = await test_execution_service.start_run(
+                    plan_id=plan_detail.id,
+                    max_concurrency=plan_detail.max_concurrency,
+                    on_event=on_exec_event_from_ingestion,
+                )
+
+                for chunk in _encode_text(encoder, run_id, f"测试执行已启动 (run_id: {test_run_id})"):
+                    yield chunk
+
+                # 转发执行事件直到完成
+                while True:
+                    try:
+                        event = await asyncio.wait_for(exec_event_queue.get(), timeout=30.0)
+                        agui_event = map_agent_event_to_agui(event)
+                        if agui_event is not None:
+                            yield encoder.encode(agui_event)
+                        # 检测执行完成
+                        if event.get("type") == "STATE_DELTA":
+                            delta = event.get("delta", [])
+                            for op in delta:
+                                if op.get("path") == "/run_progress/status" and op.get("value") in ("completed", "aborted"):
+                                    for chunk in _encode_text(encoder, run_id, "测试执行完成。"):
+                                        yield chunk
+                                    yield encoder.encode(RunFinishedEvent(
+                                        thread_id=session_id, run_id=run_id, result={"outcome": "execution_done"}
+                                    ))
+                                    return
+                    except asyncio.TimeoutError:
+                        yield encoder.encode(CustomEvent(name="heartbeat", value={"run_id": run_id}))
+                        continue
 
             except ValueError as exc:
                 for chunk in _encode_text(encoder, run_id, f"解析失败：{exc}"):
@@ -296,53 +386,16 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
             ))
             return
 
-        # ── 普通消息：走 Agent 执行流程 ──────────────────────────────────────
-        if session_id not in browser_service._sessions:
-            await browser_service.create_session(session_id)
+        # ── 无附件：提示用户上传测试用例 ──────────────────────────────────────
+        for chunk in _encode_text(
+            encoder, run_id,
+            "请先上传测试用例文件（Excel 或 Markdown），我会解析并生成测试计划供您确认后执行。"
+        ):
+            yield chunk
 
-        event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-        agent_task = None
-
-        async def on_event(event: dict[str, Any]) -> None:
-            event["run_id"] = run_id
-            event["thread_id"] = session_id
-            await event_queue.put(event)
-
-        try:
-            agent_task = asyncio.create_task(
-                agent_service.run_agent(session_id, user_message, on_event)
-            )
-
-            while not agent_task.done():
-                try:
-                    event = await asyncio.wait_for(event_queue.get(), timeout=30.0)
-                    agui_event = map_agent_event_to_agui(event)
-                    if agui_event is not None:
-                        yield encoder.encode(agui_event)
-                except asyncio.TimeoutError:
-                    heartbeat_event = {"type": "HEARTBEAT", "value": {"run_id": run_id}}
-                    agui_event = map_agent_event_to_agui(heartbeat_event)
-                    if agui_event is not None:
-                        yield encoder.encode(agui_event)
-                    continue
-
-            while not event_queue.empty():
-                try:
-                    event = event_queue.get_nowait()
-                    agui_event = map_agent_event_to_agui(event)
-                    if agui_event is not None:
-                        yield encoder.encode(agui_event)
-                except asyncio.QueueEmpty:
-                    break
-
-        except Exception as e:
-            yield encoder.encode(RunErrorEvent(message=str(e)))
-        finally:
-            if agent_task and not agent_task.done():
-                agent_task.cancel()
-            yield encoder.encode(RunFinishedEvent(
-                thread_id=session_id, run_id=run_id, result={"outcome": "success"}
-            ))
+        yield encoder.encode(RunFinishedEvent(
+            thread_id=session_id, run_id=run_id, result={"outcome": "awaiting_upload"}
+        ))
 
     return StreamingResponse(
         event_generator(),
@@ -356,17 +409,25 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
 
 
 @router.post("/agui/resume/{session_id}", status_code=200)
-async def resume_endpoint(session_id: str):
+async def resume_endpoint(session_id: str, request: Request):
     """
     HITL Resume 端点。
 
-    用户在前端确认测试计划后调用此端点，唤醒挂起的 event_generator。
+    用户在前端确认或取消测试计划后调用此端点，唤醒挂起的 event_generator。
+    body: {"action": "confirm"} 或 {"action": "cancel"}，默认 "confirm"。
     """
     event = _resume_events.get(session_id)
     if event is None:
         return {"ok": False, "reason": "no pending session"}
+    # Parse action from body
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    action = body.get("action", "confirm") if isinstance(body, dict) else "confirm"
+    _resume_actions[session_id] = action
     event.set()
-    return {"ok": True}
+    return {"ok": True, "action": action}
 
 
 # ============================================================================

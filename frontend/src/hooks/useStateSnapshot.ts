@@ -1,22 +1,8 @@
 /**
- * useStateSnapshot — 订阅 Agent 的 StateSnapshotEvent 并解析状态快照
+ * useStateSnapshot — 订阅 Agent 的 StateSnapshotEvent 和 StateDeltaEvent
  *
- * @param agentId  要订阅的 agent id，默认 "default"
- * @example
- * ```tsx
- * function BrowserStateDisplay() {
- *   const { snapshot, isLoading } = useStateSnapshot("default");
- *
- *   if (!snapshot) return null;
- *
- *   // snapshot 的结构取决于后端 agent_service 发出的 StateSnapshotEvent 内容
- *   return (
- *     <div>
- *       <pre>{JSON.stringify(snapshot, null, 2)}</pre>
- *     </div>
- *   );
- * }
- * ```
+ * StateSnapshot: 完整状态替换
+ * StateDelta: JSON Patch (RFC 6902) 增量更新
  */
 "use client";
 
@@ -24,6 +10,7 @@ import { useState, useEffect, useRef } from "react";
 import { useAgent } from "@copilotkit/react-core/v2";
 import type { AgentSubscriber } from "@ag-ui/client";
 import type { StateSnapshotEvent } from "@ag-ui/client";
+import { applyPatch } from "fast-json-patch";
 
 export interface UseStateSnapshotOptions {
   /** 订阅哪个 agent，默认为 "default" */
@@ -62,6 +49,26 @@ export function useStateSnapshot(
           setHistory(eventHistory ?? [state]);
           setIsLoading(false);
         }
+      },
+      onStateDeltaEvent({ event }) {
+        // Apply JSON Patch (RFC 6902) incremental update
+        const delta = (event as { delta?: unknown[] }).delta;
+        if (!delta || !Array.isArray(delta)) return;
+
+        setHistory((prev) => {
+          if (prev.length === 0) return prev;
+          const current = prev[prev.length - 1];
+          try {
+            const patched = applyPatch(
+              structuredClone(current),
+              delta as Parameters<typeof applyPatch>[1],
+            ).newDocument;
+            return [...prev.slice(0, -1), patched as Record<string, unknown>];
+          } catch (e) {
+            console.warn("StateDelta applyPatch failed:", e);
+            return prev;
+          }
+        });
       },
     };
 

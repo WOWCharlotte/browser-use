@@ -41,5 +41,3 @@ export interface BrowserState {
   title: string;
   screenshot?: string;
 }
-
-export type AgentStatus = "running" | "paused" | "stopped";

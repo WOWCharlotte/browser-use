@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { ChatWindow } from "@/components/chat/ChatWindow";
-import { AgentControlBar } from "@/components/chat/AgentControlBar";
 import { TestingPanel } from "@/components/testing/TestingPanel";
 import { Sidebar } from "@/components/sidebar/Sidebar";
 import { useStateSnapshot } from "@/hooks/useStateSnapshot";
@@ -145,7 +144,6 @@ export default function Home() {
 		<div className="grid grid-cols-[240px_440px_1fr] h-dvh">
 			<Sidebar currentSessionId={currentSessionId} onSessionChange={handleSessionChange} />
 			<div className="h-full min-h-0 border-r border-gray-200 flex flex-col">
-				{currentSessionId && <AgentControlBar sessionId={currentSessionId} />}
 				<ChatWindow sessionId={currentSessionId || undefined} />
 			</div>
 			<TestingPanel
