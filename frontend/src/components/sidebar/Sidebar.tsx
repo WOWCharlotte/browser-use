@@ -1,24 +1,39 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback, useImperativeHandle, forwardRef } from "react";
 import { Session } from "@/types";
 import { fetchSessions, createSession, deleteSession } from "@/lib/api";
 import { ChatHistoryItem } from "./ChatHistoryItem";
+
+export interface SidebarHandle {
+	refreshSessions: () => Promise<void>;
+}
 
 interface Props {
 	currentSessionId: string | null;
 	onSessionChange: (sessionId: string) => void;
 }
 
-export function Sidebar({ currentSessionId, onSessionChange }: Props) {
+export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ currentSessionId, onSessionChange }, ref) {
 	const [sessions, setSessions] = useState<Session[]>([]);
+	const prevSessionId = useRef<string | null>(null);
+
+	const loadSessions = useCallback(async () => {
+		const data = await fetchSessions();
+		setSessions(data);
+	}, []);
+
+	useImperativeHandle(ref, () => ({ refreshSessions: loadSessions }), [loadSessions]);
 
 	useEffect(() => {
 		loadSessions();
-	}, []);
+	}, [loadSessions]);
 
-	const loadSessions = async () => {
-		const data = await fetchSessions();
-		setSessions(data);
-	};
+	// Re-fetch when switching sessions (catches backend title updates from previous session)
+	useEffect(() => {
+		if (currentSessionId && prevSessionId.current && currentSessionId !== prevSessionId.current) {
+			loadSessions();
+		}
+		prevSessionId.current = currentSessionId;
+	}, [currentSessionId, loadSessions]);
 
 	const handleNewChat = async () => {
 		const session = await createSession();
@@ -29,11 +44,16 @@ export function Sidebar({ currentSessionId, onSessionChange }: Props) {
 	const handleDelete = async (sessionId: string) => {
 		try {
 			await deleteSession(sessionId);
-			setSessions((prev) => prev.filter((s) => s.id !== sessionId));
-			if (currentSessionId === sessionId && sessions.length > 1) {
-				const remaining = sessions.filter((s) => s.id !== sessionId);
-				onSessionChange(remaining[0]?.id || "");
-			}
+			setSessions((prev) => {
+				const remaining = prev.filter((s) => s.id !== sessionId);
+				// If we deleted the active session, switch to another
+				if (currentSessionId === sessionId) {
+					const next = remaining[0]?.id || "";
+					// Use setTimeout to avoid setState during render
+					setTimeout(() => onSessionChange(next), 0);
+				}
+				return remaining;
+			});
 		} catch (e) {
 			console.error("Failed to delete session:", e);
 		}
@@ -79,4 +99,4 @@ export function Sidebar({ currentSessionId, onSessionChange }: Props) {
 			</div>
 		</div>
 	);
-}
+});
