@@ -326,12 +326,20 @@ class TestExecutionService:
 				case_logger.error(f"执行超时（{case_timeout_seconds}s）")
 				status = "error"
 				error_msg = f"执行超时（{case_timeout_seconds}s）"
+				# Save partial trajectory before closing browser
+				await self._save_trajectory_best_effort(
+					self._active_agents.get(result_id), run_id, case, result_id, case_logger
+				)
 				# Force close browser
 				await self._force_close_session(run_id, result_id)
 			except asyncio.CancelledError:
 				case_logger.error("执行被中止")
 				status = "error"
 				error_msg = "执行被中止"
+				# Save partial trajectory on abort
+				await self._save_trajectory_best_effort(
+					self._active_agents.get(result_id), run_id, case, result_id, case_logger
+				)
 				break
 			except Exception as e:
 				case_logger.error(f"执行异常: {e}")
@@ -393,6 +401,8 @@ class TestExecutionService:
 			self._active_sessions[run_id] = []
 		self._active_sessions[run_id].append(session)
 		self._result_sessions[result_id] = session
+
+		agent: Any = None  # Track agent for trajectory saving on failure
 
 		try:
 			# Build task prompt
@@ -517,6 +527,10 @@ class TestExecutionService:
 
 		except Exception as e:
 			case_logger.error(f"执行失败: {e}")
+			# Save partial trajectory even on failure
+			await self._save_trajectory_best_effort(
+				agent, run_id, case, result_id, case_logger
+			)
 			raise
 		finally:
 			# Close browser
@@ -536,6 +550,51 @@ class TestExecutionService:
 			self._paused.pop(result_id, None)
 			self._active_agents.pop(result_id, None)
 			self._result_sessions.pop(result_id, None)
+
+	# ── Trajectory Save (best-effort) ────────────────────────────────────────
+
+	async def _save_trajectory_best_effort(
+		self,
+		agent: Any,
+		run_id: str,
+		case: dict,
+		result_id: str,
+		case_logger: "TestCaseLogger",
+	) -> None:
+		"""Save whatever trajectory the agent has accumulated, even on failure."""
+		if agent is None:
+			return
+		try:
+			history = agent.history
+			if not history or not history.history:
+				return
+			trajectory_dir = Config.TRAJECTORY_DIR / run_id
+			trajectory_dir.mkdir(parents=True, exist_ok=True)
+			trajectory_path = trajectory_dir / f"{case['case_id']}_{case.get('set_index', 0)}.json"
+			history.save_to_file(str(trajectory_path))
+			case_logger.info(f"Partial trajectory saved: {trajectory_path.name} ({len(history.history)} steps)")
+
+			# Persist screenshots
+			screenshots_dir = trajectory_dir / f"{case['case_id']}_{case.get('set_index', 0)}_screenshots"
+			screenshots_dir.mkdir(parents=True, exist_ok=True)
+			for i, item in enumerate(history.history):
+				src_path = item.state.screenshot_path
+				if src_path and Path(src_path).exists():
+					dst_path = screenshots_dir / f"step_{i + 1}.png"
+					shutil.copy2(src_path, dst_path)
+
+			# Update DB
+			db = await get_db()
+			try:
+				await db.execute(
+					"UPDATE test_results SET trajectory_path=? WHERE id=?",
+					(str(trajectory_path), result_id),
+				)
+				await db.commit()
+			finally:
+				await db.close()
+		except Exception as save_err:
+			case_logger.warn(f"Failed to save partial trajectory: {save_err}")
 
 	# ── Build Task Prompt ─────────────────────────────────────────────────────
 
