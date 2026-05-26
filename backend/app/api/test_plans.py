@@ -122,6 +122,53 @@ async def confirm_test_plan(plan_id: str):
 		return _error("INTERNAL_ERROR", str(e), 500)
 
 
+@router.get("/test-plans/{plan_id}/runs")
+async def get_test_plan_runs(plan_id: str):
+	"""Get historical run data for a test plan."""
+	from app.db.database import get_db
+
+	try:
+		db = await get_db()
+		try:
+			async with db.execute(
+				"""
+				SELECT id, status, total_cases, passed_cases, failed_cases,
+					error_cases, started_at, completed_at
+				FROM test_runs
+				WHERE plan_id = ?
+				ORDER BY started_at DESC
+				""",
+				(plan_id,),
+			) as cursor:
+				rows = await cursor.fetchall()
+				columns = [d[0] for d in cursor.description]
+
+			data = []
+			for raw_row in rows:
+				row = dict(zip(columns, raw_row))
+				total = row.get("total_cases") or 0
+				passed = row.get("passed_cases") or 0
+				pass_rate = round(passed / total * 100) if total > 0 else 0
+				data.append({
+					"run_id": row["id"],
+					"status": row["status"],
+					"total_cases": total,
+					"passed_cases": passed,
+					"failed_cases": row.get("failed_cases") or 0,
+					"error_cases": row.get("error_cases") or 0,
+					"pass_rate": pass_rate,
+					"started_at": row.get("started_at"),
+					"completed_at": row.get("completed_at"),
+				})
+
+			return {"success": True, "data": data}
+		finally:
+			await db.close()
+	except Exception as e:
+		logger.exception("Error fetching test plan runs")
+		return _error("INTERNAL_ERROR", str(e), 500)
+
+
 # ── Test Cases ──────────────────────────────────────────────────────────────
 
 @router.post("/test-plans/{plan_id}/cases")

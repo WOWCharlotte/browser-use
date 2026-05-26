@@ -1,5 +1,5 @@
 import { Session, Message, ChatRequest, BrowserState } from "@/types";
-import type { TestPlanDetailView, TestCaseView, VariableSetView } from "@/types/testing";
+import type { TestPlanDetailView, TestCaseView, VariableSetView, RunHistoryEntry } from "@/types/testing";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8888/api";
 
@@ -263,6 +263,11 @@ export async function deleteVariableSet(variableSetId: string): Promise<void> {
 		const body = await res.json().catch(() => ({ error: "Unknown error" }));
 		throw new Error(body.error ?? `HTTP ${res.status}`);
 	}
+}
+
+export async function fetchPlanRuns(planId: string): Promise<RunHistoryEntry[]> {
+	const res = await fetch(`${API_BASE}/test-plans/${planId}/runs`);
+	return _checkOk(res) as Promise<RunHistoryEntry[]>;
 }
 
 export async function resumeAgentSession(sessionId: string, action: "confirm" | "cancel" = "confirm"): Promise<void> {
