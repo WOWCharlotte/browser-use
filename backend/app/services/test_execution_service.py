@@ -202,28 +202,9 @@ class TestExecutionService:
 		async def execute_one(case: dict, index: int) -> None:
 			nonlocal completed, passed, failed, error_count
 			async with semaphore:
-				# Emit running status
-				await on_event({
-					"type": EVENT_STATE_DELTA,
-					"delta": [
-						{"op": "replace", "path": f"/case_statuses/{index}/status", "value": "running"},
-					],
-				})
-
-				# Update DB status
-				db = await get_db()
-				try:
-					await db.execute(
-						"UPDATE test_results SET status='running', started_at=? WHERE id=?",
-						(datetime.utcnow().isoformat(), case["result_id"]),
-					)
-					await db.commit()
-				finally:
-					await db.close()
-
-				# Execute with retry
+				# Execute with retry (status update happens inside after resources are ready)
 				result_status = await self._execute_with_retry(
-					run_id, case, max_retries, case_timeout_seconds
+					run_id, case, index, max_retries, case_timeout_seconds, on_event
 				)
 
 				# Update counters
@@ -290,8 +271,10 @@ class TestExecutionService:
 		self,
 		run_id: str,
 		case: dict,
+		case_index: int,
 		max_retries: int,
 		case_timeout_seconds: int,
+		on_event: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 	) -> str:
 		"""Execute a single case with retry on error (not on fail)."""
 		result_id = case["result_id"]
@@ -311,6 +294,24 @@ class TestExecutionService:
 			)
 			# Track logger for SSE streaming
 			self._active_loggers[result_id] = case_logger
+
+			# Emit running status AFTER logger is created (so log file exists for SSE)
+			if attempt == 0 and on_event and case_index >= 0:
+				await on_event({
+					"type": EVENT_STATE_DELTA,
+					"delta": [
+						{"op": "replace", "path": f"/case_statuses/{case_index}/status", "value": "running"},
+					],
+				})
+				db = await get_db()
+				try:
+					await db.execute(
+						"UPDATE test_results SET status='running', started_at=? WHERE id=?",
+						(datetime.utcnow().isoformat(), result_id),
+					)
+					await db.commit()
+				finally:
+					await db.close()
 
 			try:
 				status = await asyncio.wait_for(
@@ -659,7 +660,10 @@ class TestExecutionService:
 		case_timeout = row_dict["case_timeout_seconds"] or Config.CASE_TIMEOUT_SECONDS
 
 		# Execute
-		status = await self._execute_with_retry(run_id, case, 1, case_timeout)
+		status = await self._execute_with_retry(
+			run_id, case, case_index=-1, max_retries=1,
+			case_timeout_seconds=case_timeout, on_event=None,
+		)
 		return status
 
 	# ── Pause / Resume Single Case ────────────────────────────────────────────

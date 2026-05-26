@@ -130,7 +130,7 @@ async def get_test_run_results(run_id: str):
 
 @router.get("/test-results/{result_id}/screenshot")
 async def get_result_screenshot(result_id: str):
-	"""Get the current browser screenshot for a running test case."""
+	"""Get the current browser screenshot for a running/paused test case."""
 	db = await get_db()
 	try:
 		async with db.execute(
@@ -139,12 +139,19 @@ async def get_result_screenshot(result_id: str):
 			row = await cursor.fetchone()
 			if not row:
 				return _error("NOT_FOUND", f"Result {result_id} not found", 404)
-			if row[0] not in ("running",):
+			if row[0] not in ("running", "paused"):
 				return _error("INVALID_STATE", "Case is not currently running")
 	finally:
 		await db.close()
 
-	screenshot = await test_execution_service.take_screenshot(result_id)
+	# Browser session may not be ready yet — retry briefly
+	screenshot = None
+	for _ in range(5):
+		screenshot = await test_execution_service.take_screenshot(result_id)
+		if screenshot is not None:
+			break
+		await asyncio.sleep(1)
+
 	if screenshot is None:
 		return _error("UNAVAILABLE", "Screenshot not available (browser may not be ready)")
 	return {"success": True, "data": {"screenshot": screenshot}}
