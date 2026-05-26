@@ -37,7 +37,7 @@ export function ChatHistoryItem({ session, isActive, onClick, onDelete, onTitleC
 		}
 		setError("");
 		setShowErrorPopup(false);
-		if (trimmed && trimmed !== session.title) {
+		if (trimmed !== session.title) {
 			try {
 				await updateSession(session.id, trimmed);
 				onTitleChange?.(session.id, trimmed);
@@ -90,6 +90,9 @@ export function ChatHistoryItem({ session, isActive, onClick, onDelete, onTitleC
 
 	const handleDismissError = () => {
 		setShowErrorPopup(false);
+		setEditValue(session.title);
+		setIsEditing(false);
+		setError("");
 	};
 
 	return (
