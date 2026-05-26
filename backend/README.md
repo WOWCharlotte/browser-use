@@ -2,7 +2,7 @@
 
 ### Overview
 
-Browser Use Backend is a FastAPI-based backend service that provides AI browser automation capabilities. It integrates with the [browser-use](https://github.com/browser-use/browser-use) library to enable AI agents to autonomously navigate web pages, interact with elements, and complete complex tasks.
+Browser Use Backend is a FastAPI-based backend service that provides AI browser automation and automated testing capabilities. It integrates with the [browser-use](https://github.com/browser-use/browser-use) library to enable AI agents to autonomously navigate web pages, interact with elements, and complete complex tasks.
 
 ### Features
 
@@ -10,7 +10,14 @@ Browser Use Backend is a FastAPI-based backend service that provides AI browser 
 - **Agent Control**: Pause, resume, and stop AI agents
 - **AG-UI Protocol**: Standard HTTP agent endpoint with SSE streaming support
 - **Browser Automation**: Chrome DevTools Protocol integration
-- **SQLite Database**: Lightweight persistent storage for sessions and messages
+- **Automated Testing**:
+  - Test plan CRUD with bulk import from Excel/Markdown files
+  - Test case management with variable sets and step-level configuration
+  - Test execution engine with concurrency control
+  - Test result evaluation (AI-powered pass/fail determination)
+  - Test replay recording and playback
+  - Test reports generation
+- **SQLite Database**: Lightweight persistent storage
 
 ### Tech Stack
 
@@ -77,48 +84,98 @@ The server will start at `http://localhost:8888`
 | PUT | `/api/sessions/{session_id}` | Update session title |
 | DELETE | `/api/sessions/{session_id}` | Delete a session |
 | GET | `/api/sessions/{session_id}/messages` | Get session messages |
+| GET | `/api/sessions/{session_id}/browser_states` | Get browser state history |
 
 #### Agent Control API
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/agent/pause` | Pause agent execution |
-| POST | `/api/agent/resume` | Resume paused agent |
-| POST | `/api/agent/stop` | Stop agent execution |
-| GET | `/api/agent/status/{session_id}` | Get agent status |
+| POST | `/api/agui` | Run agent with AG-UI protocol (SSE streaming) |
+| POST | `/api/agui/resume/{session_id}` | Resume paused agent (confirm/cancel) |
 
-#### AG-UI Protocol API
+#### Test Plans API
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/agui` | Run agent with AG-UI protocol (SSE streaming) |
+| GET | `/api/test-plans` | List all test plans |
+| POST | `/api/test-plans` | Create a test plan |
+| GET | `/api/test-plans/{plan_id}` | Get plan with cases |
+| PUT | `/api/test-plans/{plan_id}` | Update plan metadata |
+| DELETE | `/api/test-plans/{plan_id}` | Delete plan and all related data |
+| PUT | `/api/test-plans/{plan_id}/confirm` | Confirm plan (draft -> confirmed) |
+| POST | `/api/test-plans/upload` | Upload and parse test file (Excel/Markdown) |
+| POST | `/api/test-plans/{plan_id}/cases` | Add a test case |
+| GET | `/api/test-plans/{plan_id}/runs` | Get run history for a plan |
+
+#### Test Cases API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| PUT | `/api/test-cases/{case_id}` | Update a test case |
+| DELETE | `/api/test-cases/{case_id}` | Delete a test case |
+| GET | `/api/test-cases/{case_id}/variables` | Get variable sets |
+| POST | `/api/test-cases/{case_id}/variables/import` | Import variable sets |
+| DELETE | `/api/test-cases/variables/{set_id}` | Delete a variable set |
+
+#### Test Runs API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/test-runs` | Start a test run |
+| GET | `/api/test-runs/{run_id}` | Get run status |
+| GET | `/api/test-runs/{run_id}/results` | Get run results |
+| POST | `/api/test-runs/{run_id}/abort` | Abort a running test |
+
+#### Test Replays API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/test-replays/{result_id}` | Get replay data for a result |
+
+#### Reports API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/reports/{run_id}` | Get test run report |
 
 ### Project Structure
 
 ```
 backend/
 ├── app/
-│   ├── __init__.py          # FastAPI app factory
-│   ├── main.py              # Application entry point
-│   ├── config.py            # Configuration management
+│   ├── __init__.py              # FastAPI app factory & router registration
+│   ├── main.py                  # Application entry point
+│   ├── config.py                # Configuration management
+│   ├── utils.py                 # Utility functions (uuid7str, etc.)
 │   ├── api/
-│   │   ├── __init__.py     # Router aggregation
-│   │   ├── sessions.py     # Session CRUD endpoints
-│   │   ├── agent.py        # Agent control endpoints
-│   │   └── agui.py         # AG-UI protocol endpoint
+│   │   ├── sessions.py         # Session CRUD endpoints
+│   │   ├── agui.py             # AG-UI protocol endpoint
+│   │   ├── test_plans.py       # Test plan & case endpoints
+│   │   ├── test_runs.py        # Test execution endpoints
+│   │   ├── test_replays.py     # Test replay endpoints
+│   │   └── reports.py          # Report generation endpoints
 │   ├── services/
-│   │   ├── session_service.py   # Session business logic
-│   │   ├── agent_service.py     # Agent orchestration
-│   │   └── browser_service.py   # Browser session management
+│   │   ├── session_service.py       # Session business logic
+│   │   ├── test_plan_service.py     # Test plan CRUD logic
+│   │   ├── test_execution_service.py # Test execution engine
+│   │   ├── test_evaluation_service.py # AI-powered result evaluation
+│   │   ├── test_case_logger.py      # Per-case logging & screenshots
+│   │   ├── test_replay_service.py   # Replay recording
+│   │   ├── ingestion_service.py     # File parsing (Excel/Markdown)
+│   │   ├── document_flattening.py   # Document preprocessing
+│   │   └── report_service.py        # Report generation
 │   ├── models/
-│   │   ├── session.py       # Session data model
-│   │   └── message.py       # Message data model
-│   ├── db/
-│   │   └── database.py      # Database initialization
-│   └── utils.py             # Utility functions
-├── tests/                   # Test files
-├── pyproject.toml           # Project configuration
-└── .env                     # Environment variables
+│   │   ├── session.py          # Session data model
+│   │   ├── test_plan.py        # Test plan/case models
+│   │   ├── test_run.py         # Test run models
+│   │   ├── test_replay.py      # Replay data models
+│   │   ├── evaluation.py       # Evaluation models
+│   │   └── ingestion.py        # File ingestion schemas
+│   └── db/
+│       └── database.py         # Database initialization & migrations
+├── tests/                       # Test files
+├── pyproject.toml               # Project configuration
+└── .env                         # Environment variables
 ```
 
 ### Development
