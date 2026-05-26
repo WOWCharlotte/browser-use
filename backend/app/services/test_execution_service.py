@@ -742,7 +742,7 @@ class TestExecutionService:
 		try:
 			await db.execute(
 				"UPDATE test_results SET status='failed', error_message='用户手动停止', "
-				"finished_at=? WHERE id=?",
+				"completed_at=? WHERE id=?",
 				(datetime.utcnow().isoformat(), result_id),
 			)
 			await db.commit()
