@@ -3,7 +3,7 @@ name = "browser-use-backend"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
-    "browser-use>=0.12.0",
+    "browser-use",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
     "aiosqlite>=0.20.0",
@@ -26,3 +26,6 @@ asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-v --tb=short"
+
+[tool.uv.sources]
+browser-use = { path = "../", editable = true }
