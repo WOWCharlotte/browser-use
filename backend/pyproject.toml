@@ -27,5 +27,11 @@ testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-v --tb=short"
 
+[project.scripts]
+backend-server = "app.main:main"
+
+[tool.uv]
+package = true
+
 [tool.uv.sources]
 browser-use = { path = "../", editable = true }

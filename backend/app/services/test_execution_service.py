@@ -396,7 +396,10 @@ class TestExecutionService:
 		self._paused[result_id] = False
 
 		# Create independent browser session
-		session = BrowserSession()
+		from browser_use import BrowserProfile
+		from app.config import Config
+		browser_profile = BrowserProfile(executable_path=Config.CHROME_EXECUTABLE_PATH) if Config.CHROME_EXECUTABLE_PATH else BrowserProfile()
+		session = BrowserSession(browser_profile=browser_profile)
 		if run_id not in self._active_sessions:
 			self._active_sessions[run_id] = []
 		self._active_sessions[run_id].append(session)

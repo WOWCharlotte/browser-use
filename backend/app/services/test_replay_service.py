@@ -99,7 +99,10 @@ class TestReplayService:
 			task = self._build_task_prompt(case_snapshot, new_variables)
 
 			# Create browser session and agent
-			session = BrowserSession()
+			from browser_use import BrowserProfile
+			from app.config import Config
+			browser_profile = BrowserProfile(executable_path=Config.CHROME_EXECUTABLE_PATH) if Config.CHROME_EXECUTABLE_PATH else BrowserProfile()
+			session = BrowserSession(browser_profile=browser_profile)
 			agent = Agent(
 				task=task,
 				llm=llm,

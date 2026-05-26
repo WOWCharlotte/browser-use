@@ -23,3 +23,4 @@ class Config:
 	MAX_CONCURRENCY: int = int(os.getenv("MAX_CONCURRENCY", "5"))
 	CASE_TIMEOUT_SECONDS: int = int(os.getenv("CASE_TIMEOUT_SECONDS", "600"))
 	TRAJECTORY_RETENTION_DAYS: int = 30
+	CHROME_EXECUTABLE_PATH: str | None = os.getenv("CHROME_EXECUTABLE_PATH", None)
