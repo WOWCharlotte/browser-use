@@ -5,18 +5,20 @@
  * CopilotKit provider 已在 layout.tsx 中全局包裹。
  */
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { CopilotChat } from "@copilotkit/react-core/v2";
 import { useAgent } from "@copilotkit/react-core/v2";
 import { getMessages } from "@/lib/api";
 
 interface Props {
 	sessionId?: string;
+	onMessageSent?: () => void;
 }
 
-export function ChatWindow({ sessionId }: Props) {
+export function ChatWindow({ sessionId, onMessageSent }: Props) {
 	const [height, setHeight] = useState(0);
 	const { agent } = useAgent({ agentId: "default" });
+	const msgCountRef = useRef(0);
 
 	useEffect(() => {
 		const updateHeight = () => setHeight(window.innerHeight);
@@ -36,11 +38,29 @@ export function ChatWindow({ sessionId }: Props) {
 					content: m.content,
 				}));
 				agent.setMessages(copilotMsgs);
+				msgCountRef.current = copilotMsgs.length;
 			})
 			.catch((err) => {
 				console.error("Failed to load historical messages:", err);
 			});
 	}, [sessionId, agent]);
+
+	// Detect new messages via agent subscriber
+	useEffect(() => {
+		if (!agent || !onMessageSent) return;
+
+		const subscriber = {
+			onMessagesChanged({ messages }: { messages: ReadonlyArray<unknown> }) {
+				if (messages.length > msgCountRef.current) {
+					msgCountRef.current = messages.length;
+					onMessageSent();
+				}
+			},
+		};
+
+		const { unsubscribe } = agent.subscribe(subscriber);
+		return unsubscribe;
+	}, [agent, onMessageSent]);
 
 	return (
 		<div style={{ height, overflow: "hidden" }}>

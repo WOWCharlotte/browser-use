@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { ChatWindow } from "@/components/chat/ChatWindow";
 import { TestingPanel } from "@/components/testing/TestingPanel";
-import { Sidebar } from "@/components/sidebar/Sidebar";
+import { Sidebar, SidebarHandle } from "@/components/sidebar/Sidebar";
 import { useStateSnapshot } from "@/hooks/useStateSnapshot";
 import { fetchBrowserStates } from "@/lib/api";
 import { BrowserState } from "@/types";
@@ -16,6 +16,21 @@ export default function Home() {
 	const [combinedHistory, setCombinedHistory] = useState<BrowserState[]>([]);
 	const [testingSnapshot, setTestingSnapshot] = useState<TestingSnapshot | undefined>(undefined);
 	const { snapshot, history } = useStateSnapshot();
+	const sidebarRef = useRef<SidebarHandle>(null);
+
+	// Refresh sidebar sessions when agent history changes (backend may have updated title)
+	const prevHistoryLen = useRef(0);
+	useEffect(() => {
+		if (history.length > prevHistoryLen.current && prevHistoryLen.current > 0) {
+			// Delay slightly to let backend commit the title update
+			const timer = setTimeout(() => {
+				sidebarRef.current?.refreshSessions();
+			}, 1000);
+			prevHistoryLen.current = history.length;
+			return () => clearTimeout(timer);
+		}
+		prevHistoryLen.current = history.length;
+	}, [history.length]);
 
 	// 1. Load historical browser states from SQLite when session changes
 	useEffect(() => {
@@ -198,11 +213,18 @@ export default function Home() {
 		}
 	}, []);
 
+	const handleMessageSent = useCallback(() => {
+		// Delay to let backend commit the title update
+		setTimeout(() => {
+			sidebarRef.current?.refreshSessions();
+		}, 1500);
+	}, []);
+
 	return (
 		<div className="grid grid-cols-[240px_440px_1fr] h-dvh">
-			<Sidebar currentSessionId={currentSessionId} onSessionChange={handleSessionChange} />
+			<Sidebar ref={sidebarRef} currentSessionId={currentSessionId} onSessionChange={handleSessionChange} />
 			<div className="h-full min-h-0 border-r border-gray-200 flex flex-col">
-				<ChatWindow sessionId={currentSessionId || undefined} />
+				<ChatWindow sessionId={currentSessionId || undefined} onMessageSent={handleMessageSent} />
 			</div>
 			<TestingPanel
 				snapshot={testingSnapshot}
