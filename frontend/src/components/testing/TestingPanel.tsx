@@ -5,6 +5,7 @@ import type { BrowserState } from "@/types";
 import { BrowserPreview } from "@/components/browser/BrowserPreview";
 import { TestCaseEditor } from "./TestCaseEditor";
 import ExecutionDashboard from "./ExecutionDashboard";
+import { OverviewPanel } from "./OverviewPanel";
 
 interface Props {
   snapshot: TestingSnapshot | undefined;
@@ -23,6 +24,8 @@ interface Props {
   onConfirm?: () => void;
   onCancel?: () => void;
   onPlanUpdate?: (plan: NonNullable<TestingSnapshot["test_plan"]>) => void;
+  onViewPlan?: (plan: NonNullable<TestingSnapshot["test_plan"]>) => void;
+  onViewRun?: (runId: string) => void;
 }
 
 export function TestingPanel({
@@ -40,25 +43,20 @@ export function TestingPanel({
   onConfirm,
   onCancel,
   onPlanUpdate,
+  onViewPlan,
+  onViewRun,
 }: Props) {
   const mode = snapshot?.panel_mode ?? "browser";
 
   if (mode === "case_editor" && snapshot?.test_plan) {
-    // #10: Guard against empty/invalid plan or missing sessionId (#11)
-    if (!sessionId) {
-      return (
-        <div className="flex flex-col h-full items-center justify-center text-sm text-red-500 bg-white">
-          <p>会话 ID 无效，无法编辑测试计划</p>
-        </div>
-      );
-    }
     return (
       <TestCaseEditor
         plan={snapshot.test_plan}
-        sessionId={sessionId}
+        sessionId={sessionId || ""}
         onConfirm={onConfirm ?? (() => {})}
         onCancel={onCancel ?? (() => {})}
         onPlanUpdate={onPlanUpdate ?? (() => {})}
+        onBack={onCancel}
       />
     );
   }
@@ -68,6 +66,7 @@ export function TestingPanel({
       <ExecutionDashboard
         runProgress={snapshot.run_progress}
         caseStatuses={snapshot.case_statuses}
+        onBack={onCancel}
       />
     );
   }
@@ -90,7 +89,17 @@ export function TestingPanel({
     return (
       <div className="flex flex-col h-full bg-white">
         <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200">
-          <span className="text-sm font-medium text-gray-700">测试报告</span>
+          <div className="flex items-center gap-2">
+            {onCancel && (
+              <button
+                onClick={onCancel}
+                className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded"
+              >
+                ← 返回
+              </button>
+            )}
+            <span className="text-sm font-medium text-gray-700">测试报告</span>
+          </div>
           {reportUrl && (
             <div className="flex gap-2">
               <a
@@ -119,7 +128,11 @@ export function TestingPanel({
     );
   }
 
-  // Default: browser mode
+  // Default: show overview if no active browser screenshot, otherwise browser
+  if (!browserState?.screenshot) {
+    return <OverviewPanel onViewPlan={onViewPlan} onViewRun={onViewRun} />;
+  }
+
   return (
     <BrowserPreview
       state={browserState}

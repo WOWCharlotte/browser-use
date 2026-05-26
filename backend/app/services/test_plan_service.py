@@ -125,7 +125,11 @@ class TestPlanService:
 		"""List all test plans ordered by creation time descending."""
 		db = await get_db()
 		try:
-			cursor = await db.execute("SELECT * FROM test_plans ORDER BY created_at DESC")
+			cursor = await db.execute(
+				"SELECT tp.*, "
+				"(SELECT COUNT(*) FROM test_cases tc WHERE tc.plan_id = tp.id) AS case_count "
+				"FROM test_plans tp ORDER BY tp.created_at DESC"
+			)
 			rows = await cursor.fetchall()
 			return [TestPlanView(**_row_to_dict(row)) for row in rows]
 		finally:
@@ -165,9 +169,25 @@ class TestPlanService:
 		return updated
 
 	async def delete_plan(self, plan_id: str) -> bool:
-		"""Delete a test plan and all its cases (cascade). Returns True if deleted."""
+		"""Delete a test plan and all its cases, runs, and results. Returns True if deleted."""
 		db = await get_db()
 		try:
+			# Delete results linked to runs of this plan
+			await db.execute(
+				"DELETE FROM test_results WHERE run_id IN "
+				"(SELECT id FROM test_runs WHERE plan_id = ?)",
+				(plan_id,),
+			)
+			# Delete replays linked to results of this plan
+			await db.execute(
+				"DELETE FROM test_replays WHERE result_id IN "
+				"(SELECT id FROM test_results WHERE run_id IN "
+				"(SELECT id FROM test_runs WHERE plan_id = ?))",
+				(plan_id,),
+			)
+			# Delete runs
+			await db.execute("DELETE FROM test_runs WHERE plan_id = ?", (plan_id,))
+			# Delete plan (cascades to test_cases and variable_sets)
 			result = await db.execute("DELETE FROM test_plans WHERE id = ?", (plan_id,))
 			await db.commit()
 			deleted = result.rowcount > 0

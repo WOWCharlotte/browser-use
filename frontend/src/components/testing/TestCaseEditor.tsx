@@ -19,6 +19,7 @@ interface Props {
   onConfirm: () => void;
   onCancel: () => void;
   onPlanUpdate: (plan: TestPlanDetailView) => void;
+  onBack?: () => void;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -168,7 +169,7 @@ function useDebouncedSave(plan: TestPlanDetailView, onPlanUpdate: (p: TestPlanDe
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpdate }: Props) {
+export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpdate, onBack }: Props) {
   // Local copy of plan — textarea values are driven from here, not from props.
   // This prevents parent re-renders from resetting cursor position.
   const [localPlan, setLocalPlan] = useState(plan);
@@ -177,7 +178,7 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
     setLocalPlan(plan);
   }
 
-  const [selectedCaseId, setSelectedCaseId] = useState<string>(localPlan.cases[0]?.id ?? "");
+  const [selectedCaseId, setSelectedCaseId] = useState<string>(localPlan.cases?.[0]?.id ?? "");
   const [variableSets, setVariableSets] = useState<Record<string, VariableSetView[]>>({});
   const [deletingCaseId, setDeletingCaseId] = useState<string | null>(null);
   const [deletingVsId, setDeletingVsId] = useState<string | null>(null);
@@ -199,7 +200,7 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
 
   const { save, cancel, savingCaseId, saveError, setSaveError, planRef, onPlanUpdateRef } = useDebouncedSave(localPlan, onPlanUpdate);
 
-  const selectedCase = localPlan.cases.find((c) => c.id === selectedCaseId) ?? localPlan.cases[0];
+  const selectedCase = localPlan.cases?.find((c) => c.id === selectedCaseId) ?? localPlan.cases?.[0];
 
   const getVarCols = (c: TestCaseView): string[] =>
     c.global_variables.length > 0 ? c.global_variables : (customVarCols[c.id] ?? []);
@@ -574,9 +575,21 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
     <div className="flex flex-col h-full min-h-0 overflow-hidden bg-white">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-        <div>
-          <h2 className="text-sm font-semibold text-gray-800">{localPlan.name}</h2>
-          <p className="text-xs text-gray-500">{localPlan.cases.length} 个用例</p>
+        <div className="flex items-center gap-2">
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded"
+              aria-label="返回概览"
+            >
+              ← 返回
+            </button>
+          )}
+          <div>
+            <h2 className="text-sm font-semibold text-gray-800">{localPlan.name}</h2>
+            <p className="text-xs text-gray-500">{localPlan.cases?.length ?? 0} 个用例</p>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <button

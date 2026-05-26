@@ -140,6 +140,64 @@ export default function Home() {
 		setTestingSnapshot(undefined);
 	}, []);
 
+	const handleViewPlan = useCallback(
+		(plan: NonNullable<TestingSnapshot["test_plan"]>) => {
+			setTestingSnapshot({ panel_mode: "case_editor", test_plan: plan });
+		},
+		[],
+	);
+
+	const handleViewRun = useCallback(async (runId: string) => {
+		const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8888/api";
+		try {
+			const [runRes, resultsRes] = await Promise.all([
+				fetch(`${API_BASE}/test-runs/${runId}`),
+				fetch(`${API_BASE}/test-runs/${runId}/results`),
+			]);
+			const runData = await runRes.json();
+			const resultsData = await resultsRes.json();
+			if (!runData.success || !resultsData.success) return;
+
+			const run = runData.data;
+			const results = resultsData.data as Array<{ id: string; case_id: string; status: string; case_snapshot_json?: string }>;
+
+			const runProgress = {
+				run_id: run.id,
+				total: run.total_cases || 0,
+				completed: (run.passed_cases || 0) + (run.failed_cases || 0) + (run.error_cases || 0),
+				passed: run.passed_cases || 0,
+				failed: run.failed_cases || 0,
+				error: run.error_cases || 0,
+				started_at: run.started_at || new Date().toISOString(),
+				status: run.status as "running" | "completed" | "aborted",
+			};
+
+			const caseStatuses = results.map((r) => {
+				let caseName = r.case_id;
+				if (r.case_snapshot_json) {
+					try {
+						const snap = JSON.parse(r.case_snapshot_json);
+						caseName = snap.case_name || caseName;
+					} catch { /* ignore */ }
+				}
+				return {
+					result_id: r.id,
+					case_id: r.case_id,
+					case_name: caseName,
+					status: r.status as "pending" | "running" | "paused" | "passed" | "failed" | "error",
+				};
+			});
+
+			setTestingSnapshot({
+				panel_mode: "execution",
+				run_progress: runProgress,
+				case_statuses: caseStatuses,
+			});
+		} catch (e) {
+			console.error("Failed to load run:", e);
+		}
+	}, []);
+
 	return (
 		<div className="grid grid-cols-[240px_440px_1fr] h-dvh">
 			<Sidebar currentSessionId={currentSessionId} onSessionChange={handleSessionChange} />
@@ -157,6 +215,8 @@ export default function Home() {
 				onConfirm={handleConfirm}
 				onCancel={handleCancel}
 				onPlanUpdate={handlePlanUpdate}
+				onViewPlan={handleViewPlan}
+				onViewRun={handleViewRun}
 			/>
 		</div>
 	);

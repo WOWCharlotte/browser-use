@@ -383,6 +383,8 @@ function CaseDetail({
   onPause,
   onResume,
   onStop,
+  onOverride,
+  onReplay,
 }: {
   resultId: string;
   status: CaseStatus;
@@ -391,8 +393,13 @@ function CaseDetail({
   onPause: () => void;
   onResume: () => void;
   onStop: () => void;
+  onOverride: (overrideStatus: "passed" | "failed", reason: string) => void;
+  onReplay: () => void;
 }) {
   const [tab, setTab] = useState<"logs" | "screenshot">("logs");
+  const [showOverrideForm, setShowOverrideForm] = useState(false);
+  const [overrideStatus, setOverrideStatus] = useState<"passed" | "failed">("passed");
+  const [overrideReason, setOverrideReason] = useState("");
 
   return (
     <div className="border-t border-gray-200 p-2 space-y-2">
@@ -468,7 +475,60 @@ function CaseDetail({
             重试
           </button>
         )}
+        {(status === "passed" || status === "failed" || status === "error") && !showOverrideForm && (
+          <button
+            onClick={() => setShowOverrideForm(true)}
+            className="px-2 py-1 text-xs bg-purple-600 hover:bg-purple-700 text-white rounded"
+          >
+            覆盖
+          </button>
+        )}
+        {(status === "passed" || status === "failed" || status === "error") && (
+          <button
+            onClick={onReplay}
+            className="px-2 py-1 text-xs bg-teal-600 hover:bg-teal-700 text-white rounded"
+          >
+            重放
+          </button>
+        )}
       </div>
+
+      {/* Override form */}
+      {showOverrideForm && (
+        <div className="flex items-center gap-2 p-2 bg-gray-50 border border-gray-200 rounded">
+          <select
+            value={overrideStatus}
+            onChange={(e) => setOverrideStatus(e.target.value as "passed" | "failed")}
+            className="text-xs border border-gray-300 rounded px-1.5 py-1 bg-white"
+          >
+            <option value="passed">通过</option>
+            <option value="failed">失败</option>
+          </select>
+          <input
+            type="text"
+            value={overrideReason}
+            onChange={(e) => setOverrideReason(e.target.value)}
+            placeholder="覆盖原因"
+            className="flex-1 text-xs border border-gray-300 rounded px-2 py-1"
+          />
+          <button
+            onClick={() => {
+              onOverride(overrideStatus, overrideReason);
+              setShowOverrideForm(false);
+              setOverrideReason("");
+            }}
+            className="px-2 py-1 text-xs bg-purple-600 hover:bg-purple-700 text-white rounded"
+          >
+            确认
+          </button>
+          <button
+            onClick={() => { setShowOverrideForm(false); setOverrideReason(""); }}
+            className="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 text-gray-700 rounded"
+          >
+            取消
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -483,6 +543,9 @@ function CaseRow({
   onPause,
   onResume,
   onStop,
+  onOverride,
+  onReplay,
+  overridden,
 }: {
   entry: CaseStatusEntry;
   isExpanded: boolean;
@@ -491,6 +554,9 @@ function CaseRow({
   onPause: () => void;
   onResume: () => void;
   onStop: () => void;
+  onOverride: (overrideStatus: "passed" | "failed", reason: string) => void;
+  onReplay: () => void;
+  overridden?: boolean;
 }) {
   const config = STATUS_CONFIG[entry.status];
   const [elapsed, setElapsed] = useState(0);
@@ -527,6 +593,9 @@ function CaseRow({
           {(entry.status === "running" || entry.status === "paused") && (
             <span className="font-mono">{Math.floor(elapsed / 60)}:{(elapsed % 60).toString().padStart(2, "0")}</span>
           )}
+          {overridden && (
+            <span className="px-1.5 py-0.5 text-[10px] bg-purple-100 text-purple-700 rounded font-medium">已覆盖</span>
+          )}
           <span className={config.color}>{entry.status}</span>
         </div>
       </div>
@@ -538,6 +607,8 @@ function CaseRow({
           onPause={onPause}
           onResume={onResume}
           onStop={onStop}
+          onOverride={onOverride}
+          onReplay={onReplay}
         />
       )}
     </div>
@@ -562,12 +633,22 @@ function ExecutionComplete({
           执行完成 — 通过率 <span className="text-green-600 font-bold">{pct}%</span>
           {" "}({progress.passed}/{progress.total})
         </div>
-        <button
-          onClick={onViewReport}
-          className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded"
-        >
-          查看报告
-        </button>
+        <div className="flex items-center gap-2">
+          <a
+            href={`${API_BASE}/test-runs/${progress.run_id}/report/excel`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-3 py-1 text-xs bg-green-50 text-green-600 border border-green-200 rounded hover:bg-green-100"
+          >
+            下载报告
+          </a>
+          <button
+            onClick={onViewReport}
+            className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded"
+          >
+            查看报告
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -578,10 +659,12 @@ function ExecutionComplete({
 interface ExecutionDashboardProps {
   runProgress: RunProgress;
   caseStatuses: CaseStatusEntry[];
+  onBack?: () => void;
 }
 
-export default function ExecutionDashboard({ runProgress, caseStatuses }: ExecutionDashboardProps) {
+export default function ExecutionDashboard({ runProgress, caseStatuses, onBack }: ExecutionDashboardProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [overriddenIds, setOverriddenIds] = useState<Set<string>>(new Set());
 
   const handleAbort = async () => {
     try {
@@ -623,12 +706,49 @@ export default function ExecutionDashboard({ runProgress, caseStatuses }: Execut
     }
   };
 
+  const handleOverride = async (resultId: string, overrideStatus: "passed" | "failed", reason: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/test-results/${resultId}/override`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: overrideStatus, reason }),
+      });
+      if (res.ok) {
+        setOverriddenIds((prev) => new Set([...prev, resultId]));
+      }
+    } catch (e) {
+      console.error("Override failed:", e);
+    }
+  };
+
+  const handleReplay = async (resultId: string) => {
+    try {
+      await fetch(`${API_BASE}/test-results/${resultId}/replay`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+    } catch (e) {
+      console.error("Replay failed:", e);
+    }
+  };
+
   const handleViewReport = () => {
     window.open(`${API_BASE}/test-runs/${runProgress.run_id}/report`, "_blank");
   };
 
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden bg-white text-gray-800">
+      {onBack && runProgress.status !== "running" && (
+        <div className="flex-shrink-0 px-3 pt-2">
+          <button
+            onClick={onBack}
+            className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded"
+          >
+            ← 返回概览
+          </button>
+        </div>
+      )}
       <ExecutionSummaryBar progress={runProgress} onAbort={handleAbort} />
 
       {/* Case list */}
@@ -643,6 +763,9 @@ export default function ExecutionDashboard({ runProgress, caseStatuses }: Execut
             onPause={() => handlePause(entry.result_id)}
             onResume={() => handleResume(entry.result_id)}
             onStop={() => handleStop(entry.result_id)}
+            onOverride={(s, r) => handleOverride(entry.result_id, s, r)}
+            onReplay={() => handleReplay(entry.result_id)}
+            overridden={overriddenIds.has(entry.result_id)}
           />
         ))}
       </div>

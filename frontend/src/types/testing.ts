@@ -49,6 +49,7 @@ export interface TestPlanDetailView {
   created_at: string;
   updated_at: string;
   cases: TestCaseView[];
+  case_count?: number;
 }
 
 export interface RunProgress {
@@ -67,6 +68,30 @@ export interface CaseStatusEntry {
   case_id: string;
   case_name: string;
   status: CaseStatus;
+}
+
+export interface TestReplayView {
+  id: string;
+  result_id: string;
+  variables_json: string | null;
+  status: "running" | "passed" | "failed" | "error";
+  mode: string;
+  fallback_count: number;
+  trajectory_path: string | null;
+  started_at: string;
+  completed_at: string | null;
+}
+
+export interface RunHistoryEntry {
+  run_id: string;
+  status: string;
+  total_cases: number;
+  passed_cases: number;
+  failed_cases: number;
+  error_cases: number;
+  pass_rate: number;
+  started_at: string;
+  completed_at: string | null;
 }
 
 export interface TestingSnapshot {

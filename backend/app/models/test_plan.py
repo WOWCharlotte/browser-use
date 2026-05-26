@@ -28,7 +28,7 @@ class TestPlanUpdate(BaseModel):
 
 class TestPlanView(BaseModel):
 	"""Response model for a test plan."""
-	model_config = ConfigDict(extra='forbid')
+	model_config = ConfigDict(extra='ignore')
 
 	id: str
 	name: str
@@ -38,6 +38,7 @@ class TestPlanView(BaseModel):
 	status: str
 	created_at: str
 	updated_at: str
+	case_count: int = 0
 
 
 class TestCaseCreate(BaseModel):
