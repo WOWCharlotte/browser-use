@@ -253,11 +253,13 @@ class TestExecutionService:
 			finally:
 				await db.close()
 
-			# Emit completion
+			# Emit completion with report URL
 			await on_event({
 				"type": EVENT_STATE_DELTA,
 				"delta": [
 					{"op": "replace", "path": "/run_progress/status", "value": "completed"},
+					{"op": "add", "path": "/report_url", "value": f"/test-runs/{run_id}/report"},
+					{"op": "replace", "path": "/panel_mode", "value": "report"},
 				],
 			})
 
@@ -491,10 +493,27 @@ class TestExecutionService:
 			finally:
 				await db.close()
 
-			# Phase 4: evaluation mock — mark as passed
-			# Phase 5 will integrate test_evaluation_service
-			case_logger.info("评估: Phase 4 mock — 标记为 passed")
-			return "passed"
+			# Phase 5: LLM-based evaluation
+			from app.services.test_evaluation_service import test_evaluation_service
+
+			case_logger.info("开始评估...")
+			eval_result = await test_evaluation_service.evaluate(
+				history, case, screenshots_dir
+			)
+			case_logger.info(f"评估结果: {eval_result.overall_status} — {eval_result.summary}")
+
+			# Persist evaluation to DB
+			db = await get_db()
+			try:
+				await db.execute(
+					"UPDATE test_results SET actual_result=?, evaluation=?, evaluation_details=? WHERE id=?",
+					(eval_result.summary, eval_result.overall_status, eval_result.model_dump_json(), result_id),
+				)
+				await db.commit()
+			finally:
+				await db.close()
+
+			return eval_result.overall_status
 
 		except Exception as e:
 			case_logger.error(f"执行失败: {e}")
@@ -805,18 +824,39 @@ class TestExecutionService:
 					var_columns = [d[0] for d in cursor.description]
 
 				if var_rows:
-					# Expand: one execution per variable set
+					# Filter out empty variable sets (all keys are empty)
+					non_empty_var_rows = []
 					for var_row in var_rows:
-						var_dict = dict(zip(var_columns, var_row))
-						variables = json.loads(var_dict.get("variables_json") or "{}")
+						var_dict_check = dict(zip(var_columns, var_row))
+						variables_check = json.loads(var_dict_check.get("variables_json") or "{}")
+						if variables_check:  # Only keep sets with actual variable values
+							non_empty_var_rows.append(var_row)
+
+					if non_empty_var_rows:
+						# Expand: one execution per non-empty variable set
+						for var_row in non_empty_var_rows:
+							var_dict = dict(zip(var_columns, var_row))
+							variables = json.loads(var_dict.get("variables_json") or "{}")
+							cases.append({
+								"case_id": case_dict["id"],
+								"case_name": case_dict["case_name"],
+								"steps_json": case_dict["steps_json"],
+								"start_url": case_dict["start_url"],
+								"variables": variables,
+								"variable_set_id": var_dict["id"],
+								"set_index": var_dict["set_index"],
+							})
+					else:
+						# All variable sets are empty — treat as single execution
+						variables = json.loads(case_dict.get("variable_values_json") or "{}")
 						cases.append({
 							"case_id": case_dict["id"],
 							"case_name": case_dict["case_name"],
 							"steps_json": case_dict["steps_json"],
 							"start_url": case_dict["start_url"],
 							"variables": variables,
-							"variable_set_id": var_dict["id"],
-							"set_index": var_dict["set_index"],
+							"variable_set_id": None,
+							"set_index": 0,
 						})
 				else:
 					# Single execution with inline variables

@@ -82,11 +82,39 @@ export function TestingPanel({
   }
 
   if (mode === "report") {
+    const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8888/api";
+    const reportUrl = snapshot?.report_url
+      ? `${API_BASE}${snapshot.report_url}`
+      : null;
+
     return (
-      <div className="flex flex-col h-full items-center justify-center text-sm text-gray-500 bg-white">
-        <div className="text-2xl mb-2">📊</div>
-        <p>报告生成中...</p>
-        <p className="text-xs text-gray-400 mt-1">报告面板将在 Phase 6 实现</p>
+      <div className="flex flex-col h-full bg-white">
+        <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200">
+          <span className="text-sm font-medium text-gray-700">测试报告</span>
+          {reportUrl && (
+            <div className="flex gap-2">
+              <a
+                href={`${reportUrl}/excel`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-2 py-1 text-xs bg-green-50 text-green-600 border border-green-200 rounded hover:bg-green-100"
+              >
+                Excel
+              </a>
+            </div>
+          )}
+        </div>
+        {reportUrl ? (
+          <iframe
+            src={reportUrl}
+            className="flex-1 w-full border-0"
+            title="Test Report"
+          />
+        ) : (
+          <div className="flex-1 flex items-center justify-center text-sm text-gray-400">
+            报告生成中...
+          </div>
+        )}
       </div>
     );
   }
