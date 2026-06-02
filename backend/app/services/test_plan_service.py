@@ -172,17 +172,18 @@ class TestPlanService:
 		"""Delete a test plan and all its cases, runs, and results. Returns True if deleted."""
 		db = await get_db()
 		try:
-			# Delete results linked to runs of this plan
-			await db.execute(
-				"DELETE FROM test_results WHERE run_id IN "
-				"(SELECT id FROM test_runs WHERE plan_id = ?)",
-				(plan_id,),
-			)
-			# Delete replays linked to results of this plan
+			# Delete test_replays linked to results of this plan's cases
+			# (must delete replays BEFORE results because result_id has no CASCADE)
 			await db.execute(
 				"DELETE FROM test_replays WHERE result_id IN "
-				"(SELECT id FROM test_results WHERE run_id IN "
-				"(SELECT id FROM test_runs WHERE plan_id = ?))",
+				"(SELECT id FROM test_results WHERE case_id IN "
+				"(SELECT id FROM test_cases WHERE plan_id = ?))",
+				(plan_id,),
+			)
+			# Delete test_results whose case_id belongs to any case of this plan
+			await db.execute(
+				"DELETE FROM test_results WHERE case_id IN "
+				"(SELECT id FROM test_cases WHERE plan_id = ?)",
 				(plan_id,),
 			)
 			# Delete runs
@@ -339,7 +340,8 @@ class TestPlanService:
 	async def create_variable_sets(
 		self, case_id: str, variable_sets: list[dict[str, str]]
 	) -> list[VariableSetView]:
-		"""Create variable sets for a case. Raises ValueError if case not found."""
+		"""Create variable sets for a case. Raises ValueError if case not found.
+		Filters out variable sets where all values are empty strings."""
 		case = await self.get_case(case_id)
 		if case is None:
 			raise ValueError(f"Test case not found: {case_id}")
@@ -347,9 +349,14 @@ class TestPlanService:
 		now = datetime.now().isoformat()
 		created: list[VariableSetView] = []
 
+		filtered_sets = [
+			vs for vs in variable_sets
+			if any(v.strip() for v in vs.values())
+		]
+
 		db = await get_db()
 		try:
-			for idx, variables in enumerate(variable_sets):
+			for idx, variables in enumerate(filtered_sets):
 				vs_id = uuid7str()
 				variables_json = json.dumps(variables)
 				await db.execute(
