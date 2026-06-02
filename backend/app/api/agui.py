@@ -248,7 +248,7 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
 
         # ── 文件附件：触发测试用例解析流程 ──────────────────────────────────
         if attachments:
-            for chunk in _encode_text(encoder, run_id, "正在解析测试用例文件，请稍候..."):
+            async for chunk in _stream_ai_message(encoder, run_id, "正在解析测试用例文件，请稍候...", session_id):
                 yield chunk
             try:
                 plan_detail = await _handle_attachments(
@@ -259,7 +259,7 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
 
                 if case_count == 0:
                     # 解析成功但未提取到用例 — 文件内容无效
-                    for chunk in _encode_text(
+                    async for chunk in _stream_ai_message(
                         encoder, run_id,
                         "未能从上传的文件中提取到有效的测试用例。\n\n"
                         "有效的测试用例文件应包含以下内容：\n"
@@ -269,6 +269,7 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
                         "• 预期结果（可选，用于自动评估）\n\n"
                         "支持的格式：Excel（.xlsx）或 Markdown（.md）。\n"
                         "请检查文件内容后重新上传。",
+                        session_id,
                     ):
                         yield chunk
                     # 删除空计划
@@ -282,9 +283,10 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
                     ))
                     return
 
-                for chunk in _encode_text(
+                async for chunk in _stream_ai_message(
                     encoder, run_id,
                     f"解析完成，共提取 {case_count} 个测试用例。请在右侧面板确认并编辑后点击「确认计划」。",
+                    session_id,
                 ):
                     yield chunk
                 yield encoder.encode(StateSnapshotEvent(
@@ -316,7 +318,7 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
 
                 if resume_action == "cancel":
                     # 用户取消计划 — 删除 draft 计划并终止
-                    for chunk in _encode_text(encoder, run_id, "测试计划已取消。"):
+                    async for chunk in _stream_ai_message(encoder, run_id, "测试计划已取消。", session_id):
                         yield chunk
                     try:
                         from app.services.test_plan_service import test_plan_service
@@ -329,7 +331,7 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
                     return
 
                 # 确认 → 自动启动执行
-                for chunk in _encode_text(encoder, run_id, "测试计划已确认，正在启动执行..."):
+                async for chunk in _stream_ai_message(encoder, run_id, "测试计划已确认，正在启动执行...", session_id):
                     yield chunk
 
                 # 启动执行引擎
@@ -348,7 +350,7 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
                     on_event=on_exec_event_from_ingestion,
                 )
 
-                for chunk in _encode_text(encoder, run_id, f"测试执行已启动 (run_id: {test_run_id})"):
+                async for chunk in _stream_ai_message(encoder, run_id, f"测试执行已启动 (run_id: {test_run_id})", session_id):
                     yield chunk
 
                 # 转发执行事件直到完成
@@ -363,7 +365,7 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
                             delta = event.get("delta", [])
                             for op in delta:
                                 if op.get("path") == "/run_progress/status" and op.get("value") in ("completed", "aborted"):
-                                    for chunk in _encode_text(encoder, run_id, "测试执行完成。"):
+                                    async for chunk in _stream_ai_message(encoder, run_id, "测试执行完成。", session_id):
                                         yield chunk
                                     yield encoder.encode(RunFinishedEvent(
                                         thread_id=session_id, run_id=run_id, result={"outcome": "execution_done"}
@@ -374,11 +376,11 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
                         continue
 
             except ValueError as exc:
-                for chunk in _encode_text(encoder, run_id, f"解析失败：{exc}"):
+                async for chunk in _stream_ai_message(encoder, run_id, f"解析失败：{exc}", session_id):
                     yield chunk
             except Exception as exc:
                 logger.exception("Unexpected error during attachment ingestion")
-                for chunk in _encode_text(encoder, run_id, "解析时发生内部错误，请重试。"):
+                async for chunk in _stream_ai_message(encoder, run_id, "解析时发生内部错误，请重试。", session_id):
                     yield chunk
 
             yield encoder.encode(RunFinishedEvent(
@@ -387,9 +389,10 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
             return
 
         # ── 无附件：提示用户上传测试用例 ──────────────────────────────────────
-        for chunk in _encode_text(
+        async for chunk in _stream_ai_message(
             encoder, run_id,
-            "请先上传测试用例文件（Excel 或 Markdown），我会解析并生成测试计划供您确认后执行。"
+            "请先上传测试用例文件（Excel 或 Markdown），我会解析并生成测试计划供您确认后执行。",
+            session_id,
         ):
             yield chunk
 
@@ -454,11 +457,20 @@ async def _handle_attachments(
     return plan_detail
 
 
-def _encode_text(encoder: EventEncoder, run_id: str, text: str) -> list[str]:
-    """生成一条完整的 assistant 文本消息事件序列（start + content + end）。"""
+async def _stream_ai_message(
+    encoder: EventEncoder,
+    run_id: str,
+    text: str,
+    session_id: str | None = None,
+) -> AsyncGenerator[str, None]:
+    """Generate a complete assistant text message event sequence (start + content + end).
+
+    If session_id is provided, also saves the message to the database.
+    """
+    from app.services.session_service import session_service
     msg_id = uuid7str()
-    return [
-        encoder.encode(TextMessageStartEvent(message_id=msg_id, role="assistant")),
-        encoder.encode(TextMessageContentEvent(message_id=msg_id, delta=text)),
-        encoder.encode(TextMessageEndEvent(message_id=msg_id)),
-    ]
+    yield encoder.encode(TextMessageStartEvent(message_id=msg_id, role="assistant"))
+    yield encoder.encode(TextMessageContentEvent(message_id=msg_id, delta=text))
+    yield encoder.encode(TextMessageEndEvent(message_id=msg_id))
+    if session_id:
+        await session_service.add_message(session_id, "ai", text)

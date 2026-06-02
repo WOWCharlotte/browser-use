@@ -665,6 +665,16 @@ interface ExecutionDashboardProps {
 export default function ExecutionDashboard({ runProgress, caseStatuses, onBack }: ExecutionDashboardProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [overriddenIds, setOverriddenIds] = useState<Set<string>>(new Set());
+  const [localCaseStatuses, setLocalCaseStatuses] = useState<CaseStatusEntry[]>(caseStatuses);
+  const [localRunProgress, setLocalRunProgress] = useState<RunProgress>(runProgress);
+
+  useEffect(() => {
+    setLocalCaseStatuses(caseStatuses);
+  }, [caseStatuses]);
+
+  useEffect(() => {
+    setLocalRunProgress(runProgress);
+  }, [runProgress]);
 
   const handleAbort = async () => {
     try {
@@ -714,7 +724,41 @@ export default function ExecutionDashboard({ runProgress, caseStatuses, onBack }
         body: JSON.stringify({ status: overrideStatus, reason }),
       });
       if (res.ok) {
-        setOverriddenIds((prev) => new Set([...prev, resultId]));
+        const entry = localCaseStatuses.find((e) => e.result_id === resultId);
+        if (entry) {
+          const oldStatus = entry.status;
+          let deltaPassed = 0;
+          let deltaFailed = 0;
+          let deltaError = 0;
+          if (oldStatus === "passed") {
+            if (overrideStatus === "failed") deltaPassed = -1, deltaFailed = 1;
+            else if (overrideStatus === "passed") deltaPassed = 0;
+          } else if (oldStatus === "failed") {
+            if (overrideStatus === "passed") deltaPassed = 1, deltaFailed = -1;
+            else if (overrideStatus === "failed") deltaFailed = 0;
+          } else if (oldStatus === "error") {
+            if (overrideStatus === "passed") deltaPassed = 1, deltaError = -1;
+            else if (overrideStatus === "failed") deltaFailed = 1, deltaError = -1;
+          } else if (oldStatus === "pending") {
+            if (overrideStatus === "passed") deltaPassed = 1;
+            else if (overrideStatus === "failed") deltaFailed = 1;
+          } else if (oldStatus === "running" || oldStatus === "paused") {
+          }
+          setOverriddenIds((prev) => new Set([...prev, resultId]));
+          setLocalCaseStatuses((prev) =>
+            prev.map((e) =>
+              e.result_id === resultId ? { ...e, status: overrideStatus } : e
+            )
+          );
+          if (deltaPassed !== 0 || deltaFailed !== 0 || deltaError !== 0) {
+            setLocalRunProgress((prev) => ({
+              ...prev,
+              passed: prev.passed + deltaPassed,
+              failed: prev.failed + deltaFailed,
+              error: prev.error + deltaError,
+            }));
+          }
+        }
       }
     } catch (e) {
       console.error("Override failed:", e);
@@ -739,7 +783,7 @@ export default function ExecutionDashboard({ runProgress, caseStatuses, onBack }
 
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden bg-white text-gray-800">
-      {onBack && runProgress.status !== "running" && (
+      {onBack && localRunProgress.status !== "running" && (
         <div className="flex-shrink-0 px-3 pt-2">
           <button
             onClick={onBack}
@@ -749,11 +793,11 @@ export default function ExecutionDashboard({ runProgress, caseStatuses, onBack }
           </button>
         </div>
       )}
-      <ExecutionSummaryBar progress={runProgress} onAbort={handleAbort} />
+      <ExecutionSummaryBar progress={localRunProgress} onAbort={handleAbort} />
 
       {/* Case list */}
       <div className="flex-1 min-h-0 overflow-y-auto">
-        {caseStatuses.map((entry) => (
+        {localCaseStatuses.map((entry) => (
           <CaseRow
             key={entry.result_id}
             entry={entry}
@@ -771,8 +815,8 @@ export default function ExecutionDashboard({ runProgress, caseStatuses, onBack }
       </div>
 
       {/* Completion bar */}
-      {runProgress.status !== "running" && (
-        <ExecutionComplete progress={runProgress} onViewReport={handleViewReport} />
+      {localRunProgress.status !== "running" && (
+        <ExecutionComplete progress={localRunProgress} onViewReport={handleViewReport} />
       )}
     </div>
   );

@@ -24,3 +24,4 @@ class Config:
 	CASE_TIMEOUT_SECONDS: int = int(os.getenv("CASE_TIMEOUT_SECONDS", "600"))
 	TRAJECTORY_RETENTION_DAYS: int = 30
 	CHROME_EXECUTABLE_PATH: str | None = os.getenv("CHROME_EXECUTABLE_PATH", None)
+	CDP_URL: str | None = os.getenv("CDP_URL", None)

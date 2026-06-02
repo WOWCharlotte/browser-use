@@ -220,6 +220,14 @@ export async function confirmTestPlan(planId: string): Promise<TestPlanDetailVie
 	return _checkOk(res) as Promise<TestPlanDetailView>;
 }
 
+export async function deleteTestPlan(planId: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/test-plans/${planId}`, { method: "DELETE" });
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({ error: "Unknown error" }));
+		throw new Error(body.error ?? body.detail ?? `HTTP ${res.status}`);
+	}
+}
+
 export async function updateTestCase(
 	caseId: string,
 	data: Partial<Pick<TestCaseView, "case_name" | "description" | "module" | "function_point" | "start_url" | "steps" | "global_variables">>,

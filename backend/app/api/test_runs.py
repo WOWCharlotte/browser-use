@@ -184,17 +184,34 @@ async def override_result(result_id: str, data: OverrideRequest):
 	db = await get_db()
 	try:
 		async with db.execute(
-			"SELECT status FROM test_results WHERE id=?", (result_id,)
+			"SELECT status, run_id FROM test_results WHERE id=?", (result_id,)
 		) as cursor:
 			row = await cursor.fetchone()
 			if not row:
 				return _error("NOT_FOUND", f"Result {result_id} not found", 404)
 
 		current_status = row[0]
+		run_id = row[1]
+
 		await db.execute(
 			"UPDATE test_results SET original_status=?, status=?, override_reason=? WHERE id=?",
 			(current_status, data.status, data.reason, result_id),
 		)
+
+		async with db.execute(
+			"SELECT status FROM test_results WHERE run_id=?", (run_id,)
+		) as cursor:
+			rows = await cursor.fetchall()
+
+		passed = sum(1 for r in rows if r[0] == "passed")
+		failed = sum(1 for r in rows if r[0] == "failed")
+		error_count = sum(1 for r in rows if r[0] == "error")
+
+		await db.execute(
+			"UPDATE test_runs SET passed_cases=?, failed_cases=?, error_cases=? WHERE id=?",
+			(passed, failed, error_count, run_id),
+		)
+
 		await db.commit()
 		return {"success": True, "data": {"status": data.status, "original_status": current_status}}
 	finally:
