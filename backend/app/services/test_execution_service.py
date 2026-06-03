@@ -398,7 +398,13 @@ class TestExecutionService:
 		# Create independent browser session
 		from browser_use import BrowserProfile
 		from app.config import Config
-		browser_profile = BrowserProfile(executable_path=Config.CHROME_EXECUTABLE_PATH) if Config.CHROME_EXECUTABLE_PATH else BrowserProfile()
+
+		# Use CDP_URL if connecting to external browser, otherwise use local browser
+		if Config.CDP_URL:
+			browser_profile = BrowserProfile(cdp_url=Config.CDP_URL)
+		else:
+			browser_profile = BrowserProfile(executable_path=Config.CHROME_EXECUTABLE_PATH) if Config.CHROME_EXECUTABLE_PATH else BrowserProfile()
+
 		session = BrowserSession(browser_profile=browser_profile)
 		if run_id not in self._active_sessions:
 			self._active_sessions[run_id] = []

@@ -5,7 +5,7 @@
  * CopilotKit provider 已在 layout.tsx 中全局包裹。
  */
 "use client";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { CopilotChat } from "@copilotkit/react-core/v2";
 import { useAgent } from "@copilotkit/react-core/v2";
 import { getMessages } from "@/lib/api";
@@ -13,12 +13,14 @@ import { getMessages } from "@/lib/api";
 interface Props {
 	sessionId?: string;
 	onMessageSent?: () => void;
+	onFirstMessage?: () => void;
 }
 
-export function ChatWindow({ sessionId, onMessageSent }: Props) {
+export function ChatWindow({ sessionId, onMessageSent, onFirstMessage }: Props) {
 	const [height, setHeight] = useState(0);
 	const { agent } = useAgent({ agentId: "default" });
 	const msgCountRef = useRef(0);
+	const firstMessageFiredRef = useRef(false);
 
 	useEffect(() => {
 		const updateHeight = () => setHeight(window.innerHeight);
@@ -61,6 +63,19 @@ export function ChatWindow({ sessionId, onMessageSent }: Props) {
 		const { unsubscribe } = agent.subscribe(subscriber);
 		return unsubscribe;
 	}, [agent, onMessageSent]);
+
+	// Watch for first user message to notify parent for auto session handling
+	const prevHasUserMsgRef = useRef(false);
+	useEffect(() => {
+		if (!agent) return;
+
+		const hasUserMessage = agent.messages.some(m => m.role === "user");
+		if (hasUserMessage && !prevHasUserMsgRef.current && !firstMessageFiredRef.current && !sessionId) {
+			firstMessageFiredRef.current = true;
+			onFirstMessage?.();
+		}
+		prevHasUserMsgRef.current = hasUserMessage;
+	}, [agent?.messages, sessionId, onFirstMessage]);
 
 	return (
 		<div style={{ height, overflow: "hidden" }}>

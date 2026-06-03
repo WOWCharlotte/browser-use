@@ -261,6 +261,19 @@ class IngestionService:
 			}))
 		return plan.model_copy(update={"test_cases": reconciled_cases})
 
+	def _filter_empty_variable_sets(self, plan: TestPlanParsedSchema) -> TestPlanParsedSchema:
+		"""Filter out empty variable sets (where all values are empty strings)."""
+		reconciled_cases: list[TestCaseParsedSchema] = []
+		for case in plan.test_cases:
+			filtered_sets = [
+				vs for vs in case.variable_sets
+				if any(v.strip() for v in vs.values())
+			]
+			reconciled_cases.append(case.model_copy(update={
+				"variable_sets": filtered_sets,
+			}))
+		return plan.model_copy(update={"test_cases": reconciled_cases})
+
 	async def parse_markdown(
 		self,
 		markdown_content: str,
@@ -296,6 +309,9 @@ class IngestionService:
 				logger.info(f"LLM attempt {attempt + 1}/{self.MAX_RETRIES + 1}")
 				response = await llm.ainvoke(messages, output_format=TestPlanParsedSchema)
 				plan = response.completion
+
+				plan = self._filter_empty_variable_sets(plan)
+
 				logger.info(f"LLM returned {len(plan.test_cases)} cases")
 
 				if not skip_validation:

@@ -5,7 +5,7 @@ import { ChatWindow } from "@/components/chat/ChatWindow";
 import { TestingPanel } from "@/components/testing/TestingPanel";
 import { Sidebar, SidebarHandle } from "@/components/sidebar/Sidebar";
 import { useStateSnapshot } from "@/hooks/useStateSnapshot";
-import { fetchBrowserStates } from "@/lib/api";
+import { fetchBrowserStates, fetchSessions } from "@/lib/api";
 import { BrowserState } from "@/types";
 import type { TestingSnapshot } from "@/types/testing";
 
@@ -220,11 +220,26 @@ export default function Home() {
 		}, 1500);
 	}, []);
 
+	const handleFirstMessage = useCallback(() => {
+		// After first message, wait for backend to create session, then fetch and switch to it
+		setTimeout(async () => {
+			try {
+				const sessions = await fetchSessions();
+				if (sessions.length > 0) {
+					const latestSession = sessions[0];
+					setCurrentSessionId(latestSession.id);
+				}
+			} catch (err) {
+				console.error("Failed to fetch sessions for auto-switch:", err);
+			}
+		}, 2000);
+	}, []);
+
 	return (
 		<div className="grid grid-cols-[240px_440px_1fr] h-dvh">
 			<Sidebar ref={sidebarRef} currentSessionId={currentSessionId} onSessionChange={handleSessionChange} />
 			<div className="h-full min-h-0 border-r border-gray-200 flex flex-col">
-				<ChatWindow sessionId={currentSessionId || undefined} onMessageSent={handleMessageSent} />
+				<ChatWindow sessionId={currentSessionId || undefined} onMessageSent={handleMessageSent} onFirstMessage={handleFirstMessage} />
 			</div>
 			<TestingPanel
 				snapshot={testingSnapshot}

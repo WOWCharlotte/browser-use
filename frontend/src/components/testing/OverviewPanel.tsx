@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import type { TestPlanDetailView, RunHistoryEntry } from "@/types/testing";
-import { fetchTestPlans, fetchPlanRuns, getTestPlan } from "@/lib/api";
+import { fetchTestPlans, fetchPlanRuns, getTestPlan, deleteTestPlan } from "@/lib/api";
 
 const STATUS_COLORS: Record<string, string> = {
   draft: "bg-gray-100 text-gray-600",
@@ -27,8 +27,7 @@ export function OverviewPanel({ onViewPlan, onViewRun }: OverviewPanelProps) {
   const [data, setData] = useState<PlanWithRuns[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedPlanId, setExpandedPlanId] = useState<string | null>(null);
-
-  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8888/api";
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
@@ -58,12 +57,13 @@ export function OverviewPanel({ onViewPlan, onViewRun }: OverviewPanelProps) {
 
   async function handleDelete(planId: string) {
     try {
-      const res = await fetch(`${API_BASE}/test-plans/${planId}`, { method: "DELETE" });
-      if (res.ok) {
-        setData((prev) => prev.filter(({ plan }) => plan.id !== planId));
-      }
-    } catch {
-      // ignore
+      await deleteTestPlan(planId);
+      setData((prev) => prev.filter(({ plan }) => plan.id !== planId));
+      setDeleteError(null);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "删除失败";
+      setDeleteError(msg);
+      setTimeout(() => setDeleteError(null), 3000);
     }
   }
 
@@ -160,6 +160,11 @@ export function OverviewPanel({ onViewPlan, onViewRun }: OverviewPanelProps) {
       {/* Plans list */}
       <section>
         <h3 className="text-xs font-medium text-gray-500 mb-2">测试计划</h3>
+        {deleteError && (
+          <div className="mb-2 px-2 py-1.5 text-xs bg-red-50 text-red-600 border border-red-200 rounded">
+            {deleteError}
+          </div>
+        )}
         <div className="space-y-1.5">
           {data.map(({ plan, runs }) => (
             <PlanRow
