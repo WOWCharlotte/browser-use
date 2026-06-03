@@ -17,8 +17,10 @@ from typing import Any, Awaitable, Callable
 from app.config import Config
 from app.db.database import get_db
 from app.models.test_run import TestRunCreate, TestRunView, TestResultView
+from app.services.model_router import ModelTask, get_routed_llm
 from app.services.test_case_logger import TestCaseLogger
 from app.utils import uuid7str
+from browser_use.llm.base import BaseChatModel
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +44,10 @@ class TestExecutionService:
 		self._pause_events: dict[str, asyncio.Event] = {}
 		# result_id → paused flag
 		self._paused: dict[str, bool] = {}
+
+	def _get_llm(self) -> BaseChatModel:
+		"""Get routed LLM for browser test execution."""
+		return get_routed_llm(ModelTask.EXECUTION)
 
 	# ── Startup Recovery ──────────────────────────────────────────────────────
 
@@ -384,7 +390,6 @@ class TestExecutionService:
 		Phase 4: evaluation is mocked (returns passed).
 		"""
 		from browser_use import Agent, BrowserSession
-		from browser_use.llm.openai.chat import ChatOpenAI
 
 		result_id = case["result_id"]
 		case_logger.info(f"开始执行用例: {case['case_name']}")
@@ -418,12 +423,8 @@ class TestExecutionService:
 			task = self._build_task_prompt(case)
 			case_logger.info(f"Task prompt built, start_url: {case.get('start_url', 'N/A')}")
 
-			# Create LLM
-			llm = ChatOpenAI(
-				model=Config.LLM_MODEL,
-				api_key=Config.LLM_API_KEY,
-				base_url=Config.LLM_BASE_URL,
-			)
+			# Create routed LLM
+			llm = self._get_llm()
 
 			# Calculate max_steps based on case complexity
 			steps_raw = case.get("steps_json", "[]")

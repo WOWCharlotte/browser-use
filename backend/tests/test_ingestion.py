@@ -10,7 +10,9 @@ import pytest
 from app.models.ingestion import (
 	IngestionRequest,
 	IngestionResponse,
+	TestCaseParsedSchema,
 	TestCaseSchema,
+	TestPlanParsedSchema,
 	TestStepSchema,
 )
 from pydantic import ValidationError
@@ -281,7 +283,7 @@ class TestIngestionServiceIntegration:
 
 		from browser_use.llm.views import ChatInvokeCompletion
 
-		mock_response = TestCaseSchema(
+		mock_case = TestCaseParsedSchema(
 			case_name="User Login",
 			start_url="https://example.com/login",
 			steps=[
@@ -293,7 +295,9 @@ class TestIngestionServiceIntegration:
 				),
 			],
 			global_variables=["username"],
+			variable_sets=[{"username": "test-user"}],
 		)
+		mock_response = TestPlanParsedSchema(test_cases=[mock_case])
 
 		mock_llm.ainvoke = AsyncMock(
 			return_value=ChatInvokeCompletion(completion=mock_response, usage=None)
@@ -304,9 +308,10 @@ class TestIngestionServiceIntegration:
 
 		result = await service.parse_markdown("# Test Case\n\nStep 1: Enter username", skip_validation=True)
 
-		assert result.case_name == "User Login"
-		assert len(result.steps) == 1
-		assert result.global_variables == ["username"]
+		assert len(result.test_cases) == 1
+		assert result.test_cases[0].case_name == "User Login"
+		assert len(result.test_cases[0].steps) == 1
+		assert result.test_cases[0].global_variables == ["username"]
 
 	@pytest.mark.asyncio
 	async def test_parse_markdown_no_variables(self, mock_llm):
@@ -315,7 +320,7 @@ class TestIngestionServiceIntegration:
 
 		from browser_use.llm.views import ChatInvokeCompletion
 
-		mock_response = TestCaseSchema(
+		mock_case = TestCaseParsedSchema(
 			case_name="Simple Navigation",
 			start_url="https://example.com",
 			steps=[
@@ -327,7 +332,9 @@ class TestIngestionServiceIntegration:
 				),
 			],
 			global_variables=[],
+			variable_sets=[],
 		)
+		mock_response = TestPlanParsedSchema(test_cases=[mock_case])
 
 		mock_llm.ainvoke = AsyncMock(
 			return_value=ChatInvokeCompletion(completion=mock_response, usage=None)
@@ -338,7 +345,7 @@ class TestIngestionServiceIntegration:
 
 		result = await service.parse_markdown("Simple test content", skip_validation=True)
 
-		assert result.global_variables == []
+		assert result.test_cases[0].global_variables == []
 
 	@pytest.mark.asyncio
 	async def test_ingest_file_unsupported_type(self):

@@ -13,6 +13,8 @@ from typing import Any
 
 from app.config import Config
 from app.models.evaluation import CheckpointEvaluation, EvaluationResult
+from app.services.model_router import ModelTask, get_routed_llm
+from browser_use.llm.base import BaseChatModel
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +52,10 @@ EVALUATION_SYSTEM_PROMPT = """\
 class TestEvaluationService:
 	"""Evaluates test case execution results using LLM."""
 
+	def _get_llm(self) -> BaseChatModel:
+		"""Get routed LLM for checkpoint evaluation."""
+		return get_routed_llm(ModelTask.EVALUATION, timeout=Config.EVAL_LLM_TIMEOUT)
+
 	async def evaluate(
 		self,
 		history: Any,
@@ -80,7 +86,7 @@ class TestEvaluationService:
 			if visual_count:
 				logger.info(f"[{case_name}] 包含 {visual_count} 个视觉检查点截图")
 
-			logger.info(f"[{case_name}] 调用评估 LLM ({Config.EVAL_LLM_MODEL})...")
+			logger.info(f"[{case_name}] 调用评估 LLM...")
 			result = await self._call_llm(messages)
 			logger.info(
 				f"[{case_name}] 评估完成: {result.overall_status} "
@@ -212,14 +218,7 @@ class TestEvaluationService:
 
 	async def _call_llm(self, messages: list) -> EvaluationResult:
 		"""Call LLM and parse structured response."""
-		from browser_use.llm.openai.chat import ChatOpenAI
-
-		llm = ChatOpenAI(
-			model=Config.EVAL_LLM_MODEL,
-			api_key=Config.LLM_API_KEY,
-			base_url=Config.LLM_BASE_URL,
-			timeout=Config.EVAL_LLM_TIMEOUT,
-		)
+		llm = self._get_llm()
 
 		# Try structured output first
 		try:

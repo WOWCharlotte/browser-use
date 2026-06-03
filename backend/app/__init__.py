@@ -3,6 +3,10 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.logging_config import configure_logging
+
+configure_logging()
+
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="AI Workspace Backend")
@@ -24,6 +28,14 @@ async def startup():
 		await init_db()
 	except Exception as e:
 		logger.error(f"Failed to initialize database: {e}")
+		raise
+
+	# Load model routing configuration and import configured model clients
+	from app.services.model_router import warm_up_model_router
+	try:
+		warm_up_model_router()
+	except Exception as e:
+		logger.error(f"Failed to warm up model router: {e}")
 		raise
 
 	# Check browser availability

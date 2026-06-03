@@ -64,6 +64,26 @@ LLM_API_KEY="your-api-key"
 LLM_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
 ```
 
+Optional task-aware model routing can be configured with `MODEL_ROUTES_JSON`. If it is not set, the backend keeps using the legacy `LLM_*` and `EVAL_LLM_*` values above.
+
+```env
+MODEL_ROUTES_JSON='{
+  "providers": {
+    "browser_use_primary": {"provider": "browser_use", "model": "bu-2-0", "api_key_env": "BROWSER_USE_API_KEY"},
+    "qwen_vl": {"provider": "openai", "model": "qwen-vl-max", "api_key_env": "LLM_API_KEY", "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"},
+    "qwen_text": {"provider": "openai", "model": "qwen-plus", "api_key_env": "LLM_API_KEY", "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"}
+  },
+  "routes": {
+    "ingestion": ["qwen_text", "browser_use_primary", "qwen_vl"],
+    "execution": ["browser_use_primary", "qwen_vl"],
+    "evaluation": ["qwen_vl", "browser_use_primary", "qwen_text"],
+    "replay": ["browser_use_primary", "qwen_vl"]
+  }
+}'
+MODEL_ROUTER_MAX_ATTEMPTS_PER_CALL="3"
+MODEL_ROUTER_LOG_FAILURES="true"
+```
+
 #### Running
 
 ```bash

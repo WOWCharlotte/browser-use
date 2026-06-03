@@ -12,7 +12,9 @@ from pathlib import Path
 
 from app.config import Config
 from app.db.database import get_db
+from app.services.model_router import ModelTask, get_routed_llm
 from app.utils import uuid7str
+from browser_use.llm.base import BaseChatModel
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +24,10 @@ class TestReplayService:
 
 	def __init__(self) -> None:
 		self._active_tasks: dict[str, asyncio.Task] = {}
+
+	def _get_llm(self) -> BaseChatModel:
+		"""Get routed LLM for replay fallback."""
+		return get_routed_llm(ModelTask.REPLAY)
 
 	async def replay(self, result_id: str, new_variables: dict[str, str] | None = None) -> str:
 		"""Start a replay for a given test result. Returns replay_id immediately."""
@@ -82,18 +88,13 @@ class TestReplayService:
 		"""Background task: execute the replay and persist results."""
 		from browser_use import Agent, BrowserSession
 		from browser_use.agent.views import AgentHistoryList
-		from browser_use.llm.openai.chat import ChatOpenAI
 
 		session: BrowserSession | None = None
 		fallback_count = 0
 
 		try:
-			# Build LLM (used as ai_step_llm for fallback)
-			llm = ChatOpenAI(
-				model=Config.LLM_MODEL,
-				api_key=Config.LLM_API_KEY,
-				base_url=Config.LLM_BASE_URL,
-			)
+			# Build routed LLM (used as ai_step_llm for fallback)
+			llm = self._get_llm()
 
 			# Build task prompt from case snapshot
 			task = self._build_task_prompt(case_snapshot, new_variables)

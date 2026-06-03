@@ -9,11 +9,11 @@ Output: TestPlanParsedSchema (list[TestCaseParsedSchema]).
 import logging
 import re
 
-from app.config import Config
 from app.models.ingestion import TestCaseParsedSchema, TestPlanParsedSchema
 from app.services.document_flattening import document_flattener
+from app.services.model_router import ModelTask, get_routed_llm
+from browser_use.llm.base import BaseChatModel
 from browser_use.llm.messages import SystemMessage, UserMessage
-from browser_use.llm.openai.chat import ChatOpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -196,18 +196,13 @@ class IngestionService:
 	MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
 
 	def __init__(self) -> None:
-		self._llm: ChatOpenAI | None = None
+		self._llm: BaseChatModel | None = None
 
-	def _get_llm(self) -> ChatOpenAI:
+	def _get_llm(self) -> BaseChatModel:
 		"""Get or create LLM client."""
 		if self._llm is None:
 			logger.debug("Initializing LLM client for ingestion service")
-			self._llm = ChatOpenAI(
-				model=Config.LLM_MODEL,
-				api_key=Config.LLM_API_KEY,
-				base_url=Config.LLM_BASE_URL,
-				temperature=0.1,
-			)
+			self._llm = get_routed_llm(ModelTask.INGESTION, temperature=0.1)
 		return self._llm
 
 	def _validate_placeholders(self, text: str) -> list[str]:
@@ -236,6 +231,10 @@ class IngestionService:
 		if not text:
 			return []
 		return list(set(re.findall(r'\{([a-zA-Z_][a-zA-Z0-9_]*)\}', text)))
+
+	def _extract_variables_from_text(self, text: str | None) -> list[str]:
+		"""Backward-compatible alias for variable extraction callers."""
+		return self._extract_vars(text)
 
 	def _reconcile_variables(self, plan: TestPlanParsedSchema) -> TestPlanParsedSchema:
 		"""
