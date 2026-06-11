@@ -74,6 +74,33 @@ async def test_database_schema_initialization():
 
 
 @pytest.mark.asyncio
+async def test_database_initialization_uses_canonical_schema_file(tmp_path):
+    """Database initialization should load the shared SQL schema file."""
+    from app.db import database
+
+    assert database.SCHEMA_PATH.exists()
+    schema_sql = database.load_schema_sql()
+    assert "CREATE TABLE IF NOT EXISTS test_runs" in schema_sql
+
+    original_db_path = Config.DATABASE_PATH
+    Config.DATABASE_PATH = tmp_path / "canonical_schema.db"
+    try:
+        await init_db()
+        assert Config.DATABASE_PATH.exists()
+        conn = await get_db()
+        try:
+            async with conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='test_replays'"
+            ) as cursor:
+                row = await cursor.fetchone()
+                assert row is not None
+        finally:
+            await conn.close()
+    finally:
+        Config.DATABASE_PATH = original_db_path
+
+
+@pytest.mark.asyncio
 async def test_session_creation_with_defined_id():
     """测试支持传入预定义 ID 创建会话"""
     custom_id = uuid7str()

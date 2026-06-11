@@ -1,58 +1,50 @@
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.config import BackendSettings
 from app.logging_config import configure_logging
 
 configure_logging()
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="AI Workspace Backend")
 
-app.add_middleware(
-	CORSMiddleware,
-	allow_origins=["*"],
-	allow_credentials=True,
-	allow_methods=["*"],
-	allow_headers=["*"],
-)
-
-
-@app.on_event("startup")
-async def startup():
+async def initialize_backend() -> None:
+	"""Run backend startup checks and recovery tasks."""
+	from app.config import Config
 	from app.db.database import init_db
+	from app.services.model_router import warm_up_model_router
+	from app.services.test_execution_service import test_execution_service
+	from browser_use.browser.watchdogs.local_browser_watchdog import LocalBrowserWatchdog
 
 	try:
 		await init_db()
-	except Exception as e:
-		logger.error(f"Failed to initialize database: {e}")
+	except Exception as exc:
+		logger.error("Failed to initialize database: %s", exc)
 		raise
 
-	# Load model routing configuration and import configured model clients
-	from app.services.model_router import warm_up_model_router
 	try:
 		warm_up_model_router()
-	except Exception as e:
-		logger.error(f"Failed to warm up model router: {e}")
+	except Exception as exc:
+		logger.error("Failed to warm up model router: %s", exc)
 		raise
 
-	# Check browser availability
-	from app.config import Config
-	from browser_use.browser.watchdogs.local_browser_watchdog import LocalBrowserWatchdog
 	chrome_path = Config.CHROME_EXECUTABLE_PATH
 	if chrome_path:
-		from pathlib import Path
 		if Path(chrome_path).is_file():
-			logger.info(f"Browser check passed: using configured executable at {chrome_path}")
+			logger.info("Browser check passed: using configured executable at %s", chrome_path)
 		else:
-			logger.error(f"Browser check failed: CHROME_EXECUTABLE_PATH={chrome_path!r} does not exist")
+			logger.error("Browser check failed: CHROME_EXECUTABLE_PATH=%r does not exist", chrome_path)
 			raise RuntimeError(f"Configured browser executable not found: {chrome_path}")
 	else:
 		found = LocalBrowserWatchdog._find_installed_browser_path()
 		if found:
-			logger.info(f"Browser check passed: auto-detected browser at {found}")
+			logger.info("Browser check passed: auto-detected browser at %s", found)
 		else:
 			logger.error(
 				"Browser check failed: no Chrome/Chromium found. "
@@ -60,21 +52,45 @@ async def startup():
 			)
 			raise RuntimeError("No Chrome/Chromium browser found, cannot start server.")
 
-	# Recover residual running states from previous crashes
-	from app.services.test_execution_service import test_execution_service
 	try:
 		await test_execution_service.recover_on_startup()
 		await test_execution_service.cleanup_old_trajectories()
-	except Exception as e:
-		logger.warning(f"Startup recovery warning: {e}")
+	except Exception as exc:
+		logger.warning("Startup recovery warning: %s", exc)
 
 
-# Import routers after app creation to avoid circular imports
-from app.api import agui, reports, sessions, test_plans, test_replays, test_runs
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+	"""FastAPI lifespan hook for backend startup."""
+	await initialize_backend()
+	yield
 
-app.include_router(sessions.router, prefix="/api", tags=["sessions"])
-app.include_router(agui.router, prefix="/api", tags=["agui"])
-app.include_router(test_plans.router, prefix="/api", tags=["test-plans"])
-app.include_router(test_runs.router, prefix="/api", tags=["test-runs"])
-app.include_router(reports.router, prefix="/api", tags=["reports"])
-app.include_router(test_replays.router, prefix="/api", tags=["test-replays"])
+
+def create_app(settings: BackendSettings | None = None) -> FastAPI:
+	"""Create and configure the FastAPI backend app."""
+	backend_settings = settings or BackendSettings()
+	fastapi_app = FastAPI(title="AI Workspace Backend", lifespan=lifespan)
+	fastapi_app.state.settings = backend_settings
+
+	fastapi_app.add_middleware(
+		CORSMiddleware,
+		allow_origins=["*"],
+		allow_credentials=True,
+		allow_methods=["*"],
+		allow_headers=["*"],
+	)
+
+	from app.api import agui, chat, reports, sessions, test_plans, test_replays, test_runs
+
+	fastapi_app.include_router(sessions.router, prefix="/api", tags=["sessions"])
+	fastapi_app.include_router(chat.router, prefix="/api", tags=["chat"])
+	fastapi_app.include_router(agui.router, prefix="/api", tags=["agui"])
+	fastapi_app.include_router(test_plans.router, prefix="/api", tags=["test-plans"])
+	fastapi_app.include_router(test_runs.router, prefix="/api", tags=["test-runs"])
+	fastapi_app.include_router(reports.router, prefix="/api", tags=["reports"])
+	fastapi_app.include_router(test_replays.router, prefix="/api", tags=["test-replays"])
+
+	return fastapi_app
+
+
+app = create_app()

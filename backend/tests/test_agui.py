@@ -298,6 +298,54 @@ class TestMapAgentEventToAgui:
 # 测试任务提取函数
 # ============================================================================
 
+class TestExtractedAguiComponents:
+    def test_event_mapper_module_preserves_run_started_mapping(self):
+        from app.services.agui.event_mapper import map_agent_event_to_agui as extracted_mapper
+
+        result = extracted_mapper({
+            "type": "RUN_STARTED",
+            "run_id": "run-1",
+            "thread_id": "thread-1",
+        })
+
+        assert isinstance(result, RunStartedEvent)
+        assert result.run_id == "run-1"
+        assert result.thread_id == "thread-1"
+
+    def test_input_parser_module_extracts_task(self):
+        from app.services.agui.input_parser import extract_task as extracted_extract_task
+
+        msg = UserMessage(id="msg-1", role="user", content="Extract me")
+        input_data = RunAgentInput(
+            thread_id="thread-1",
+            run_id="run-1",
+            state={},
+            tools=[],
+            context=[],
+            forwarded_props={},
+            messages=[msg],
+        )
+
+        assert extracted_extract_task(input_data) == "Extract me"
+
+    @pytest.mark.asyncio
+    async def test_hitl_coordinator_resume_roundtrip(self):
+        from app.services.agui.hitl import InMemoryHitlCoordinator
+
+        coordinator = InMemoryHitlCoordinator()
+        event = coordinator.create_waiter("session-1")
+
+        assert coordinator.get_action("session-1") == "confirm"
+        assert event.is_set() is False
+
+        assert coordinator.resume("session-1", "cancel") is True
+        assert event.is_set() is True
+        assert coordinator.get_action("session-1") == "cancel"
+
+        coordinator.clear_waiter("session-1")
+        assert coordinator.resume("session-1", "confirm") is False
+
+
 class TestExtractTask:
     """测试 extract_task 函数"""
 

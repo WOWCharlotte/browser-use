@@ -17,6 +17,8 @@ from typing import Any, Awaitable, Callable
 from app.config import Config
 from app.db.database import get_db
 from app.models.test_run import TestRunCreate, TestRunView, TestResultView
+from app.services.execution.prompt_builder import TestPromptBuilder
+from app.services.execution.runtime_state import ExecutionRuntimeState
 from app.services.model_router import ModelTask, get_routed_llm
 from app.services.test_case_logger import TestCaseLogger
 from app.utils import uuid7str
@@ -44,6 +46,15 @@ class TestExecutionService:
 		self._pause_events: dict[str, asyncio.Event] = {}
 		# result_id → paused flag
 		self._paused: dict[str, bool] = {}
+		self._runtime_state = ExecutionRuntimeState()
+		self._prompt_builder = TestPromptBuilder()
+		self._runtime_state.active_tasks = self._active_tasks
+		self._runtime_state.active_sessions = self._active_sessions
+		self._runtime_state.active_loggers = self._active_loggers
+		self._runtime_state.active_agents = self._active_agents
+		self._runtime_state.result_sessions = self._result_sessions
+		self._runtime_state.pause_events = self._pause_events
+		self._runtime_state.paused = self._paused
 
 	def _get_llm(self) -> BaseChatModel:
 		"""Get routed LLM for browser test execution."""
@@ -610,6 +621,7 @@ class TestExecutionService:
 
 	def _build_task_prompt(self, case: dict) -> str:
 		"""Build the Agent task prompt with variable substitution."""
+		return self._prompt_builder.build(case)
 		steps_raw = case.get("steps_json", "[]")
 		if isinstance(steps_raw, str):
 			steps = json.loads(steps_raw)

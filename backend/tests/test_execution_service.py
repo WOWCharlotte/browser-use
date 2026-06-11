@@ -269,6 +269,63 @@ class TestExecutionServiceBuildPrompt:
 		assert "点击按钮" in prompt
 
 
+class TestExecutionPromptBuilder:
+	def test_prompt_builder_replaces_variables_and_adds_completion_rules(self):
+		from app.services.execution.prompt_builder import TestPromptBuilder
+
+		builder = TestPromptBuilder()
+		case = {
+			"case_name": "Login",
+			"start_url": "http://localhost/{tenant}",
+			"steps_json": json.dumps([
+				{
+					"step_number": 1,
+					"action_description": "Enter {username}",
+					"expected_result": "Hello {username}",
+				},
+			]),
+			"variables": {"tenant": "acme", "username": "admin"},
+		}
+
+		prompt = builder.build(case)
+
+		assert "http://localhost/acme" in prompt
+		assert "Enter admin" in prompt
+		assert "Hello admin" in prompt
+		assert "{username}" not in prompt
+		assert "done" in prompt
+
+
+class TestExecutionRuntimeState:
+	def test_runtime_state_tracks_run_tasks_and_result_controls(self):
+		from app.services.execution.runtime_state import ExecutionRuntimeState
+
+		state = ExecutionRuntimeState()
+		task = MagicMock()
+		agent = MagicMock()
+		session = MagicMock()
+		logger = MagicMock()
+
+		state.add_run_task("run-1", task)
+		state.add_run_session("run-1", session)
+		state.set_result_agent("result-1", agent)
+		state.set_result_session("result-1", session)
+		state.set_result_logger("result-1", logger)
+		state.create_pause_event("result-1")
+
+		assert state.get_run_tasks("run-1") == {task}
+		assert state.get_result_agent("result-1") is agent
+		assert state.get_result_session("result-1") is session
+		assert state.get_result_logger("result-1") is logger
+		assert state.is_paused("result-1") is False
+
+		state.set_paused("result-1", True)
+		assert state.is_paused("result-1") is True
+
+		state.clear_result("result-1")
+		assert state.get_result_agent("result-1") is None
+
+
 class TestExecutionServiceStartRun:
 	async def test_start_run_creates_records(self, seeded_db, db_path, tmp_path):
 		"""start_run should create run + result records and emit StateSnapshot."""

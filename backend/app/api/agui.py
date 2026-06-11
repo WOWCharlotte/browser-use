@@ -207,6 +207,12 @@ def extract_task(input_data: RunAgentInput) -> str:
     return extract_input(input_data).text
 
 
+from app.services.agui.event_mapper import map_agent_event_to_agui
+from app.services.agui.hitl import InMemoryHitlCoordinator
+
+hitl_coordinator = InMemoryHitlCoordinator()
+
+
 # ============================================================================
 # API 端点
 # ============================================================================
@@ -297,8 +303,7 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
                 ))
 
                 # ── HITL：挂起等待用户确认，每 20s 发心跳保活 ──────────────
-                resume_event = asyncio.Event()
-                _resume_events[session_id] = resume_event
+                resume_event = hitl_coordinator.create_waiter(session_id)
                 try:
                     while not resume_event.is_set():
                         try:
@@ -311,10 +316,10 @@ async def agui_endpoint(input_data: RunAgentInput, request: Request) -> Streamin
                                 CustomEvent(name="heartbeat", value={"run_id": run_id})
                             )
                 finally:
-                    _resume_events.pop(session_id, None)
+                    hitl_coordinator.clear_waiter(session_id)
 
                 # 读取用户动作：confirm 或 cancel
-                resume_action = _resume_actions.pop(session_id, "confirm")
+                resume_action = hitl_coordinator.get_action(session_id)
 
                 if resume_action == "cancel":
                     # 用户取消计划 — 删除 draft 计划并终止
@@ -419,17 +424,14 @@ async def resume_endpoint(session_id: str, request: Request):
     用户在前端确认或取消测试计划后调用此端点，唤醒挂起的 event_generator。
     body: {"action": "confirm"} 或 {"action": "cancel"}，默认 "confirm"。
     """
-    event = _resume_events.get(session_id)
-    if event is None:
-        return {"ok": False, "reason": "no pending session"}
     # Parse action from body
     try:
         body = await request.json()
     except Exception:
         body = {}
     action = body.get("action", "confirm") if isinstance(body, dict) else "confirm"
-    _resume_actions[session_id] = action
-    event.set()
+    if not hitl_coordinator.resume(session_id, action):
+        return {"ok": False, "reason": "no pending session"}
     return {"ok": True, "action": action}
 
 

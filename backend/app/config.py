@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+from pydantic import BaseModel
 
 # Load .env file
 load_dotenv(Path(__file__).parent.parent / ".env")
@@ -25,3 +26,14 @@ class Config:
 	TRAJECTORY_RETENTION_DAYS: int = 30
 	CHROME_EXECUTABLE_PATH: str | None = os.getenv("CHROME_EXECUTABLE_PATH", None)
 	CDP_URL: str | None = os.getenv("CDP_URL", None)
+
+
+class BackendSettings(BaseModel):
+	"""Runtime settings for backend application construction."""
+
+	project_root: Path = Config.PROJECT_ROOT
+	database_path: Path = Config.DATABASE_PATH
+	max_concurrency: int = Config.MAX_CONCURRENCY
+	case_timeout_seconds: int = Config.CASE_TIMEOUT_SECONDS
+	chrome_executable_path: str | None = Config.CHROME_EXECUTABLE_PATH
+	cdp_url: str | None = Config.CDP_URL
