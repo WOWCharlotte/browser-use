@@ -5,7 +5,7 @@
  * CopilotKit provider 已在 layout.tsx 中全局包裹。
  */
 "use client";
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { CopilotChat } from "@copilotkit/react-core/v2";
 import { useAgent } from "@copilotkit/react-core/v2";
 import { getMessages } from "@/lib/api";
@@ -30,10 +30,19 @@ export function ChatWindow({ sessionId, onMessageSent, onFirstMessage }: Props) 
 	}, []);
 
 	useEffect(() => {
-		if (!sessionId || !agent) return;
+		if (!agent) return;
+		if (!sessionId) {
+			agent.setMessages([]);
+			msgCountRef.current = 0;
+			prevHasUserMsgRef.current = false;
+			firstMessageFiredRef.current = false;
+			return;
+		}
 
+		let cancelled = false;
 		getMessages(sessionId)
 			.then((msgs) => {
+				if (cancelled) return;
 				const copilotMsgs = msgs.map((m) => ({
 					id: m.id,
 					role: ((m.role as string) === "assistant" || (m.role as string) === "ai" ? "assistant" : "user") as "assistant" | "user",
@@ -43,8 +52,12 @@ export function ChatWindow({ sessionId, onMessageSent, onFirstMessage }: Props) 
 				msgCountRef.current = copilotMsgs.length;
 			})
 			.catch((err) => {
+				if (cancelled) return;
 				console.error("Failed to load historical messages:", err);
 			});
+		return () => {
+			cancelled = true;
+		};
 	}, [sessionId, agent]);
 
 	// Detect new messages via agent subscriber
@@ -69,7 +82,9 @@ export function ChatWindow({ sessionId, onMessageSent, onFirstMessage }: Props) 
 	useEffect(() => {
 		if (!agent) return;
 
-		const hasUserMessage = agent.messages.some(m => m.role === "user");
+		const hasUserMessage = agent.messages.some(
+			(m) => typeof m === "object" && m !== null && "role" in m && (m as { role?: unknown }).role === "user",
+		);
 		if (hasUserMessage && !prevHasUserMsgRef.current && !firstMessageFiredRef.current && !sessionId) {
 			firstMessageFiredRef.current = true;
 			onFirstMessage?.();
@@ -80,6 +95,7 @@ export function ChatWindow({ sessionId, onMessageSent, onFirstMessage }: Props) 
 	return (
 		<div style={{ height, overflow: "hidden" }}>
 			<CopilotChat
+				key={sessionId ?? "empty-session"}
 				agentId="default"
 				threadId={sessionId}
 				style={{ height }}

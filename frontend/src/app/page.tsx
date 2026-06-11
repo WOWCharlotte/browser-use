@@ -122,9 +122,10 @@ export default function Home() {
 		setCurrentIndex((prev) => Math.min((prev ?? 0) + 1, combinedHistory.length - 1));
 	};
 
-	const handleSessionChange = (sessionId: string) => {
+	const handleSessionChange = useCallback((sessionId: string) => {
+		setTestingSnapshot(undefined);
 		setCurrentSessionId(sessionId);
-	};
+	}, []);
 
 	// 3. Sync testing snapshot from agent state
 	useEffect(() => {
@@ -227,13 +228,13 @@ export default function Home() {
 				const sessions = await fetchSessions();
 				if (sessions.length > 0) {
 					const latestSession = sessions[0];
-					setCurrentSessionId(latestSession.id);
+					handleSessionChange(latestSession.id);
 				}
 			} catch (err) {
 				console.error("Failed to fetch sessions for auto-switch:", err);
 			}
 		}, 2000);
-	}, []);
+	}, [handleSessionChange]);
 
 	return (
 		<div className="grid grid-cols-[240px_440px_1fr] h-dvh">

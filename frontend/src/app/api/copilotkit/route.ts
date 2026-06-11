@@ -25,27 +25,9 @@ function createAgent(): AbstractAgent {
 	return new HttpAgent({ url: `${AGENT_URL}` });
 }
 
-// 注册 Agent (支持多 Agent 配置)
+// Register the single Agent used by the frontend.
 const agents: Record<string, AbstractAgent> = {
 	default: createAgent(),
-	agentic_chat: createAgent(),
-	human_in_the_loop: createAgent(),
-	tool_rendering: createAgent(),
-	gen_ui_agent: createAgent(),
-	shared_state_read: createAgent(),
-	shared_state_write: createAgent(),
-	shared_state_streaming: createAgent(),
-	prebuilt_sidebar: createAgent(),
-	prebuilt_popup: createAgent(),
-	chat_slots: createAgent(),
-	chat_customization_css: createAgent(),
-	headless_simple: createAgent(),
-	headless_complete: createAgent(),
-	frontend_tools: createAgent(),
-	frontend_tools_async: createAgent(),
-	readonly_state_agent_context: createAgent(),
-	hitl_in_chat: createAgent(),
-	hitl_in_app: createAgent(),
 };
 
 console.log(

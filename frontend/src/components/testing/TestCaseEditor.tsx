@@ -36,10 +36,24 @@ function extractVars(text: string): Set<string> {
 function stepsVars(c: TestCaseView): Set<string> {
   const all = new Set<string>();
   for (const step of c.steps) {
+    for (const v of step.step_variables ?? []) all.add(v);
     for (const v of extractVars(step.action_description)) all.add(v);
     if (step.expected_result) for (const v of extractVars(step.expected_result)) all.add(v);
   }
   return all;
+}
+
+function uniqueVars(...groups: string[][]): string[] {
+  const seen = new Set<string>();
+  const vars: string[] = [];
+  for (const group of groups) {
+    for (const name of group) {
+      if (!name || seen.has(name)) continue;
+      seen.add(name);
+      vars.push(name);
+    }
+  }
+  return vars;
 }
 
 interface CaseError {
@@ -192,8 +206,7 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
   const [customVarCols, setCustomVarCols] = useState<Record<string, string[]>>({});
   const [newColName, setNewColName] = useState<Record<string, string>>({});
   const [newColError, setNewColError] = useState<string | null>(null);
-  // editingColIdx: {caseId, colIndex} for renaming a column
-  const [editingCol, setEditingCol] = useState<{ caseId: string; idx: number; value: string } | null>(null);
+  const [editingCol, setEditingCol] = useState<{ caseId: string; name: string; value: string } | null>(null);
   const [editColError, setEditColError] = useState<string | null>(null);
   const [invalidCaseIds, setInvalidCaseIds] = useState<Set<string>>(new Set());
   const dragStepIdx = useRef<number | null>(null);
@@ -203,7 +216,7 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
   const selectedCase = localPlan.cases?.find((c) => c.id === selectedCaseId) ?? localPlan.cases?.[0];
 
   const getVarCols = (c: TestCaseView): string[] =>
-    c.global_variables.length > 0 ? c.global_variables : (customVarCols[c.id] ?? []);
+    uniqueVars(c.global_variables, [...stepsVars(c)], customVarCols[c.id] ?? []);
 
   // ── variable sets ──────────────────────────────────────────────────────────
 
@@ -338,38 +351,38 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
     setPendingVarRows((prev) => ({ ...prev, [caseId]: (prev[caseId] ?? []).map((row) => ({ ...row, [name]: "" })) }));
   };
 
-  const handleStartEditCol = (caseId: string, idx: number, currentName: string) => {
-    setEditingCol({ caseId, idx, value: currentName });
+  const handleStartEditCol = (caseId: string, currentName: string) => {
+    setEditingCol({ caseId, name: currentName, value: currentName });
     setEditColError(null);
   };
 
-  const handleDeleteCustomCol = (caseId: string, idx: number) => {
+  const handleDeleteCustomCol = (caseId: string, name: string) => {
     const cols = [...(customVarCols[caseId] ?? [])];
-    const removed = cols[idx];
-    cols.splice(idx, 1);
-    setCustomVarCols((prev) => ({ ...prev, [caseId]: cols }));
+    const nextCols = cols.filter((col) => col !== name);
     // Remove the column key from all pending rows
     setPendingVarRows((prev) => ({
       ...prev,
       [caseId]: (prev[caseId] ?? []).map((row) => {
-        const { [removed]: _, ...rest } = row;
+        const { [name]: _, ...rest } = row;
         return rest;
       }),
     }));
+    setCustomVarCols((prev) => ({ ...prev, [caseId]: nextCols }));
   };
 
   const handleCommitEditCol = () => {
     if (!editingCol) return;
-    const { caseId, idx, value } = editingCol;
+    const { caseId, name: oldName, value } = editingCol;
     const newName = value.trim();
     const err = validateVarName(newName);
     if (err) { setEditColError(err); return; }
     const cols = [...(customVarCols[caseId] ?? [])];
-    const oldName = cols[idx];
     if (newName === oldName) { setEditingCol(null); return; }
-    if (cols.includes(newName)) { setEditColError("变量名已存在"); return; }
-    cols[idx] = newName;
-    setCustomVarCols((prev) => ({ ...prev, [caseId]: cols }));
+    const testCase = localPlan.cases.find((c) => c.id === caseId);
+    const existing = testCase ? getVarCols(testCase).filter((col) => col !== oldName) : cols.filter((col) => col !== oldName);
+    if (existing.includes(newName)) { setEditColError("变量名已存在"); return; }
+    const nextCols = cols.map((col) => (col === oldName ? newName : col));
+    setCustomVarCols((prev) => ({ ...prev, [caseId]: nextCols }));
     // Rename key in pending rows
     setPendingVarRows((prev) => ({
       ...prev,
@@ -669,6 +682,7 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
               newColError={newColError}
               editingCol={editingCol?.caseId === selectedCase.id ? editingCol : null}
               editColError={editColError}
+              editableVarCols={customVarCols[selectedCase.id] ?? []}
               onMetaChange={handleMetaChange}
               onStepChange={handleStepChange}
               onAddStep={handleAddStep}
@@ -683,8 +697,8 @@ export function TestCaseEditor({ plan, sessionId, onConfirm, onCancel, onPlanUpd
               onSaveVarRows={handleSaveVarRows}
               onAddCustomCol={() => handleAddCustomCol(selectedCase.id)}
               onNewColNameChange={(v) => { setNewColName((prev) => ({ ...prev, [selectedCase.id]: v })); setNewColError(null); }}
-              onStartEditCol={(idx, name) => handleStartEditCol(selectedCase.id, idx, name)}
-              onDeleteCustomCol={(idx) => handleDeleteCustomCol(selectedCase.id, idx)}
+              onStartEditCol={(name) => handleStartEditCol(selectedCase.id, name)}
+              onDeleteCustomCol={(name) => handleDeleteCustomCol(selectedCase.id, name)}
               onEditColChange={(v) => setEditingCol((prev) => prev ? { ...prev, value: v } : null)}
               onCommitEditCol={handleCommitEditCol}
               onCancelEditCol={() => { setEditingCol(null); setEditColError(null); }}
@@ -711,8 +725,9 @@ interface CaseDetailProps {
   deletingVsId: string | null;
   newColName: string;
   newColError: string | null;
-  editingCol: { caseId: string; idx: number; value: string } | null;
+  editingCol: { caseId: string; name: string; value: string } | null;
   editColError: string | null;
+  editableVarCols: string[];
   onMetaChange: (caseId: string, field: "case_name" | "start_url" | "module" | "function_point", value: string) => void;
   onStepChange: (caseId: string, idx: number, field: keyof TestStepView, value: string | boolean) => void;
   onAddStep: (caseId: string) => void;
@@ -727,8 +742,8 @@ interface CaseDetailProps {
   onSaveVarRows: () => void;
   onAddCustomCol: () => void;
   onNewColNameChange: (v: string) => void;
-  onStartEditCol: (idx: number, name: string) => void;
-  onDeleteCustomCol: (idx: number) => void;
+  onStartEditCol: (name: string) => void;
+  onDeleteCustomCol: (name: string) => void;
   onEditColChange: (v: string) => void;
   onCommitEditCol: () => void;
   onCancelEditCol: () => void;
@@ -736,14 +751,14 @@ interface CaseDetailProps {
 
 function CaseDetail({
   testCase, varCols, varSets, pendingVarRows, loadingVars, savingSteps, savingVars,
-  deletingVsId, newColName, newColError, editingCol, editColError,
+  deletingVsId, newColName, newColError, editingCol, editColError, editableVarCols,
   onMetaChange, onStepChange, onAddStep, onDeleteStep,
   onDragStart, onDragOver, onDragEnd,
   onAddVarRow, onPendingVarChange, onDeletePendingRow, onDeleteSavedVarSet, onSaveVarRows,
   onAddCustomCol, onNewColNameChange, onStartEditCol, onDeleteCustomCol, onEditColChange, onCommitEditCol, onCancelEditCol,
 }: CaseDetailProps) {
-  const noVarsFromLLM = testCase.global_variables.length === 0;
   const hasVarCols = varCols.length > 0;
+  const editableVarColSet = new Set(editableVarCols);
 
   return (
     <div className="p-4 space-y-5">
@@ -866,23 +881,21 @@ function CaseDetail({
         </div>
 
         {/* Add / rename custom column */}
-        {noVarsFromLLM && (
-          <div className="mb-2 space-y-1">
-            <div className="flex items-center gap-2">
-              <input type="text" value={newColName} onChange={(e) => onNewColNameChange(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && onAddCustomCol()}
-                placeholder="变量名（英文，如 username）"
-                maxLength={VAR_NAME_MAX}
-                className="flex-1 text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300"
-                aria-label="新变量名" />
-              <button type="button" onClick={onAddCustomCol} disabled={!newColName.trim()}
-                className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-40 transition-colors">
-                添加变量
-              </button>
-            </div>
-            {newColError && <p className="text-xs text-red-600">{newColError}</p>}
+        <div className="mb-2 space-y-1">
+          <div className="flex items-center gap-2">
+            <input type="text" value={newColName} onChange={(e) => onNewColNameChange(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && onAddCustomCol()}
+              placeholder="变量名（英文，如 username）"
+              maxLength={VAR_NAME_MAX}
+              className="flex-1 text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300"
+              aria-label="新变量名" />
+            <button type="button" onClick={onAddCustomCol} disabled={!newColName.trim()}
+              className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-40 transition-colors">
+              添加变量
+            </button>
           </div>
-        )}
+          {newColError && <p className="text-xs text-red-600">{newColError}</p>}
+        </div>
 
         {loadingVars ? (
           <p className="text-xs text-gray-400">加载中...</p>
@@ -893,10 +906,10 @@ function CaseDetail({
             <table className="w-full text-xs" role="table">
               <thead className="bg-gray-50">
                 <tr>
-                  {varCols.map((v, colIdx) => (
+                  {varCols.map((v) => (
                     <th key={v} className="px-2 py-2 text-left text-gray-500 font-medium">
-                      {noVarsFromLLM ? (
-                        editingCol?.idx === colIdx ? (
+                      {editableVarColSet.has(v) ? (
+                        editingCol?.name === v ? (
                           <div className="space-y-0.5">
                             <div className="flex items-center gap-1">
                               <input type="text" value={editingCol.value} onChange={(e) => onEditColChange(e.target.value)}
@@ -912,11 +925,11 @@ function CaseDetail({
                         ) : (
                           <span className="flex items-center gap-1 group/col">
                             <span>{v}</span>
-                            <button type="button" onClick={() => onStartEditCol(colIdx, v)}
+                            <button type="button" onClick={() => onStartEditCol(v)}
                               className="opacity-0 group-hover/col:opacity-100 text-gray-400 hover:text-blue-600 transition-all" title="重命名">
                               ✎
                             </button>
-                            <button type="button" onClick={() => onDeleteCustomCol(colIdx)}
+                            <button type="button" onClick={() => onDeleteCustomCol(v)}
                               className="opacity-0 group-hover/col:opacity-100 text-gray-400 hover:text-red-500 transition-all" title="删除该变量列">
                               ✕
                             </button>

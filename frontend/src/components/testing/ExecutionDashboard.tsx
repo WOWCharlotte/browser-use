@@ -694,7 +694,14 @@ export default function ExecutionDashboard({ runProgress, caseStatuses, onBack }
 
   const handlePause = async (resultId: string) => {
     try {
-      await fetch(`${API_BASE}/test-results/${resultId}/pause`, { method: "POST" });
+      const res = await fetch(`${API_BASE}/test-results/${resultId}/pause`, { method: "POST" });
+      if (res.ok) {
+        setLocalCaseStatuses((prev) =>
+          prev.map((entry) =>
+            entry.result_id === resultId ? { ...entry, status: "paused" } : entry
+          )
+        );
+      }
     } catch (e) {
       console.error("Pause failed:", e);
     }
@@ -702,7 +709,14 @@ export default function ExecutionDashboard({ runProgress, caseStatuses, onBack }
 
   const handleResume = async (resultId: string) => {
     try {
-      await fetch(`${API_BASE}/test-results/${resultId}/resume`, { method: "POST" });
+      const res = await fetch(`${API_BASE}/test-results/${resultId}/resume`, { method: "POST" });
+      if (res.ok) {
+        setLocalCaseStatuses((prev) =>
+          prev.map((entry) =>
+            entry.result_id === resultId ? { ...entry, status: "running" } : entry
+          )
+        );
+      }
     } catch (e) {
       console.error("Resume failed:", e);
     }
