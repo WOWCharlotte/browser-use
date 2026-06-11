@@ -62,7 +62,7 @@ Note that:
 - `|SHADOW(open)|` or `|SHADOW(closed)|` prefix indicates shadow DOM elements
 </browser_state>
 <browser_vision>
-If you used screenshot before, you will be provided with a screenshot of the current page with  bounding boxes around interactive elements. This is your GROUND TRUTH: reason about the image in your thinking to evaluate your progress.
+When browser vision is provided, you will receive browser screenshots with bounding boxes around interactive elements. When both "Previous screenshot" and "Current screenshot" are provided, compare them to verify whether your last action changed the page as expected before repeating the same action.
 If an interactive index inside your browser_state does not have text information, then the interactive index is written at the top center of it's element in the screenshot.
 Use screenshot if you are unsure or simply want more information.
 </browser_vision>

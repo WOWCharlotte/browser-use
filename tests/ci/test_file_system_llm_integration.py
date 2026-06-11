@@ -8,8 +8,8 @@ import pytest
 from PIL import Image
 
 from browser_use.agent.message_manager.service import MessageManager
-from browser_use.agent.prompts import AgentMessagePrompt
-from browser_use.agent.views import ActionResult, AgentStepInfo
+from browser_use.agent.prompts import AgentMessagePrompt, SystemPrompt
+from browser_use.agent.views import ActionResult, AgentStepInfo, MessageManagerState
 from browser_use.browser.views import BrowserStateSummary, TabInfo
 from browser_use.dom.views import SerializedDOMState
 from browser_use.filesystem.file_system import FileSystem
@@ -140,6 +140,51 @@ class TestImageInLLMMessages:
 		img_part = image_parts[0]
 		assert 'data:image/' in img_part.image_url.url
 		assert 'base64,base64_image_data_here' in img_part.image_url.url
+
+	def test_message_manager_includes_previous_and_current_browser_screenshots(self, tmp_path: Path):
+		"""Test that state messages include the two most recent browser screenshots."""
+		fs = FileSystem(tmp_path)
+		system_message = SystemMessage(content='Test system message')
+		mm = MessageManager(task='test', system_message=system_message, state=MessageManagerState(), file_system=fs)
+
+		first_state = BrowserStateSummary(
+			url='https://example.com',
+			title='First',
+			tabs=[TabInfo(target_id='test-0', url='https://example.com', title='First')],
+			screenshot='first_screenshot',
+			dom_state=SerializedDOMState(_root=None, selector_map={}),
+		)
+		second_state = BrowserStateSummary(
+			url='https://example.com',
+			title='Second',
+			tabs=[TabInfo(target_id='test-0', url='https://example.com', title='Second')],
+			screenshot='second_screenshot',
+			dom_state=SerializedDOMState(_root=None, selector_map={}),
+		)
+
+		mm.create_state_messages(browser_state_summary=first_state, use_vision=True)
+		mm.create_state_messages(browser_state_summary=second_state, use_vision=True)
+
+		state_message = mm.get_messages()[1]
+		assert isinstance(state_message.content, list)
+
+		image_parts = [part for part in state_message.content if isinstance(part, ContentPartImageParam)]
+		text_parts = [part.text for part in state_message.content if isinstance(part, ContentPartTextParam)]
+
+		assert len(image_parts) == 2
+		assert image_parts[0].image_url.url == 'data:image/png;base64,first_screenshot'
+		assert image_parts[1].image_url.url == 'data:image/png;base64,second_screenshot'
+		assert 'Previous screenshot:' in text_parts
+		assert 'Current screenshot:' in text_parts
+
+	def test_system_prompt_explains_previous_and_current_screenshot_comparison(self):
+		"""Test that the default system prompt explains how to use two browser screenshots."""
+		system_prompt = SystemPrompt().get_system_message()
+
+		assert isinstance(system_prompt.content, str)
+		assert 'Previous screenshot' in system_prompt.content
+		assert 'Current screenshot' in system_prompt.content
+		assert 'compare them' in system_prompt.content
 
 	def test_agent_message_prompt_png_vs_jpg_media_type(self, tmp_path: Path):
 		"""Test that AgentMessagePrompt correctly detects PNG vs JPG media types."""

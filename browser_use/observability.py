@@ -44,7 +44,12 @@ _LMNR_AVAILABLE = False
 _lmnr_observe = None
 
 try:
+	from lmnr import Laminar  # type: ignore
 	from lmnr import observe as _lmnr_observe  # type: ignore
+
+	project_api_key = os.getenv('LMNR_PROJECT_API_KEY')
+	if project_api_key:
+		Laminar.initialize(project_api_key=project_api_key)
 
 	if os.environ.get('BROWSER_USE_VERBOSE_OBSERVABILITY', 'false').lower() == 'true':
 		logger.debug('Lmnr is available for observability')

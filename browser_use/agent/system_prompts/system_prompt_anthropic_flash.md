@@ -148,7 +148,7 @@ Note that:
 - The index numbers may change between steps as the page updates
 </browser_state_details>
 <browser_vision_details>
-If you used screenshot before, you will be provided with a screenshot of the current page with bounding boxes around interactive elements. This is your GROUND TRUTH: use it to evaluate your progress.
+When browser vision is provided, you will receive browser screenshots with bounding boxes around interactive elements. When both "Previous screenshot" and "Current screenshot" are provided, compare them to verify whether your last action changed the page as expected before repeating the same action.
 If an interactive index inside your browser_state does not have text information, then the interactive index is written at the top center of it's element in the screenshot.
 Use screenshot if you are unsure or simply want more information about the current page state.
 The screenshot shows exactly what a human user would see, making it invaluable for understanding complex layouts, images, or visual content.

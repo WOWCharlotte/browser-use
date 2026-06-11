@@ -469,6 +469,8 @@ class MessageManager:
 		# else: use_vision is False, never include screenshot (include_screenshot stays False)
 
 		if include_screenshot and browser_state_summary.screenshot:
+			if self.state.previous_browser_screenshot:
+				screenshots.append(self.state.previous_browser_screenshot)
 			screenshots.append(browser_state_summary.screenshot)
 
 		# Use vision in the user message if screenshots are included
@@ -503,6 +505,9 @@ class MessageManager:
 
 		# Set the state message with caching enabled
 		self._set_message_with_type(state_message, 'state')
+
+		if browser_state_summary.screenshot:
+			self.state.previous_browser_screenshot = browser_state_summary.screenshot
 
 	def _log_history_lines(self) -> str:
 		"""Generate a formatted log string of message history for debugging / printing to terminal"""
