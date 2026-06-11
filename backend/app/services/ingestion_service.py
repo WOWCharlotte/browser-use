@@ -7,9 +7,11 @@ Output: TestPlanParsedSchema (list[TestCaseParsedSchema]).
 """
 
 import logging
+import io
+import math
 import re
 
-from app.models.ingestion import TestCaseParsedSchema, TestPlanParsedSchema
+from app.models.ingestion import TestCaseParsedSchema, TestPlanParsedSchema, TestStepSchema
 from app.services.document_flattening import document_flattener
 from app.services.model_router import ModelTask, get_routed_llm
 from browser_use.llm.base import BaseChatModel
@@ -194,6 +196,15 @@ class IngestionService:
 
 	MAX_RETRIES = 2
 	MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
+	MAX_MARKDOWN_CHARS_PER_LLM_CALL = 12000
+	EXCEL_TEST_CASE_COLUMNS = {
+		"模块",
+		"测试功能点",
+		"url",
+		"用例名称",
+		"用例步骤",
+		"预期结果",
+	}
 
 	def __init__(self) -> None:
 		self._llm: BaseChatModel | None = None
@@ -273,6 +284,172 @@ class IngestionService:
 			}))
 		return plan.model_copy(update={"test_cases": reconciled_cases})
 
+	def _cell_to_text(self, value: object) -> str:
+		"""Convert spreadsheet cell values to clean strings."""
+		if value is None:
+			return ""
+		if isinstance(value, float) and math.isnan(value):
+			return ""
+		text = str(value).strip()
+		return "" if text.lower() == "nan" else text
+
+	def _split_excel_steps(self, steps_text: str) -> list[str]:
+		"""Split an Excel test-step cell into individual action descriptions."""
+		cleaned = re.sub(r"<br\s*/?>", "\n", steps_text, flags=re.IGNORECASE)
+		parts = re.split(r"(?:^|\n)\s*\d+[.、)]\s*", cleaned)
+		steps = [part.strip() for part in parts if part.strip()]
+		return steps or ([steps_text.strip()] if steps_text.strip() else [])
+
+	def _is_structured_test_case_sheet(self, columns: list[object]) -> bool:
+		"""Return True when an Excel sheet has the expected test case columns."""
+		return self.EXCEL_TEST_CASE_COLUMNS.issubset({str(column).strip() for column in columns})
+
+	def _parse_excel_file(self, file_content: bytes) -> TestPlanParsedSchema | None:
+		"""Parse structured Excel test case sheets directly without LLM."""
+		try:
+			import pandas as pd
+		except ImportError:
+			logger.info("pandas is not available; falling back to LLM Excel parsing")
+			return None
+
+		try:
+			sheets = pd.read_excel(io.BytesIO(file_content), sheet_name=None, engine="openpyxl")
+		except Exception as exc:
+			logger.debug("Structured Excel parsing skipped: %s", exc)
+			return None
+
+		parsed_cases: list[TestCaseParsedSchema] = []
+		for sheet_name, df in sheets.items():
+			if df.empty or not self._is_structured_test_case_sheet(list(df.columns)):
+				logger.debug("Skipping non-test-case Excel sheet: %s", sheet_name)
+				continue
+
+			for _, row in df.iterrows():
+				case_name = self._cell_to_text(row.get("用例名称"))
+				steps_text = self._cell_to_text(row.get("用例步骤"))
+				if not case_name or not steps_text:
+					continue
+
+				expected_result = self._cell_to_text(row.get("预期结果")) or None
+				step_texts = self._split_excel_steps(steps_text)
+				steps = [
+					TestStepSchema(
+						step_number=index,
+						action_description=step_text,
+						expected_result=expected_result if index == len(step_texts) else None,
+						step_variables=[],
+						is_visual_checkpoint=False,
+					)
+					for index, step_text in enumerate(step_texts, start=1)
+				]
+
+				parsed_cases.append(TestCaseParsedSchema(
+					case_name=case_name,
+					description=self._cell_to_text(row.get("用例编号")) or None,
+					module=self._cell_to_text(row.get("模块")) or None,
+					function_point=self._cell_to_text(row.get("测试功能点")) or None,
+					start_url=self._cell_to_text(row.get("url")) or "about:blank",
+					steps=steps,
+					global_variables=[],
+					variable_sets=[],
+				))
+
+		if not parsed_cases:
+			return None
+
+		logger.info("Parsed %d structured Excel test cases without LLM", len(parsed_cases))
+		return TestPlanParsedSchema(test_cases=parsed_cases)
+
+	def _split_markdown_chunks(self, markdown_content: str) -> list[str]:
+		"""Split long markdown into LLM-sized chunks, preserving heading sections when possible."""
+		if len(markdown_content) <= self.MAX_MARKDOWN_CHARS_PER_LLM_CALL:
+			return [markdown_content]
+
+		sections = re.split(r"(?=^#{1,6}\s+)", markdown_content, flags=re.MULTILINE)
+		sections = [section.strip() for section in sections if section.strip()]
+		if not sections:
+			sections = [markdown_content.strip()]
+
+		chunks: list[str] = []
+		current_sections: list[str] = []
+		current_length = 0
+
+		def flush_current() -> None:
+			nonlocal current_sections, current_length
+			if current_sections:
+				chunks.append("\n\n".join(current_sections))
+				current_sections = []
+				current_length = 0
+
+		for section in sections:
+			section_length = len(section)
+			if section_length > self.MAX_MARKDOWN_CHARS_PER_LLM_CALL:
+				flush_current()
+				for start in range(0, section_length, self.MAX_MARKDOWN_CHARS_PER_LLM_CALL):
+					chunk = section[start : start + self.MAX_MARKDOWN_CHARS_PER_LLM_CALL].strip()
+					if chunk:
+						chunks.append(chunk)
+				continue
+
+			next_length = current_length + section_length + (2 if current_sections else 0)
+			if current_sections and next_length > self.MAX_MARKDOWN_CHARS_PER_LLM_CALL:
+				flush_current()
+
+			current_sections.append(section)
+			current_length += section_length + (2 if current_length else 0)
+
+		flush_current()
+		return chunks
+
+	async def _parse_markdown_chunk(
+		self,
+		llm: BaseChatModel,
+		chunk: str,
+		skip_validation: bool,
+		chunk_label: str | None = None,
+	) -> TestPlanParsedSchema:
+		"""Parse one markdown chunk into a structured test plan."""
+		messages = [
+			SystemMessage(content=TEST_PLAN_EXTRACTION_PROMPT),
+			UserMessage(content=chunk),
+		]
+
+		last_error: Exception | None = None
+		for attempt in range(self.MAX_RETRIES + 1):
+			try:
+				label = f" {chunk_label}" if chunk_label else ""
+				logger.info(f"LLM attempt{label} {attempt + 1}/{self.MAX_RETRIES + 1}")
+				response = await llm.ainvoke(messages, output_format=TestPlanParsedSchema)
+				plan = self._filter_empty_variable_sets(response.completion)
+
+				logger.info(f"LLM returned {len(plan.test_cases)} cases")
+
+				if not skip_validation:
+					errors = self._validate_plan(plan)
+					if errors:
+						logger.warning(f"Validation errors: {errors}")
+						if attempt < self.MAX_RETRIES:
+							messages = [
+								SystemMessage(content=TEST_PLAN_EXTRACTION_PROMPT),
+								UserMessage(content=(
+									f"上次输出存在以下错误，请修正后重新解析：\n"
+									f"{chr(10).join(errors)}\n\n"
+									f"原始文档：\n{chunk}"
+								)),
+							]
+							continue
+						raise ValueError(f"Validation failed after {self.MAX_RETRIES} retries: {errors}")
+
+				return self._reconcile_variables(plan)
+
+			except Exception as e:
+				last_error = e
+				logger.warning(f"Attempt {attempt + 1} failed: {e}")
+				if attempt < self.MAX_RETRIES:
+					continue
+
+		raise ValueError(f"Failed to parse after {self.MAX_RETRIES + 1} attempts: {last_error}")
+
 	async def parse_markdown(
 		self,
 		markdown_content: str,
@@ -281,7 +458,8 @@ class IngestionService:
 		"""
 		Parse markdown content into a structured test plan using LLM.
 
-		One LLM call handles extraction, variable substitution, and case merging.
+		Long documents are split into smaller chunks before LLM parsing to reduce
+		truncated or malformed structured output.
 
 		Args:
 			markdown_content: Flattened markdown text from document
@@ -297,49 +475,24 @@ class IngestionService:
 		preview = markdown_content[:200] + "..." if len(markdown_content) > 200 else markdown_content
 		logger.info(f"Parsing markdown ({len(markdown_content)} chars): {preview}")
 
-		messages = [
-			SystemMessage(content=TEST_PLAN_EXTRACTION_PROMPT),
-			UserMessage(content=markdown_content),
-		]
+		chunks = self._split_markdown_chunks(markdown_content)
+		if len(chunks) > 1:
+			logger.info("Split markdown into %d chunks for ingestion", len(chunks))
 
-		last_error: Exception | None = None
-		for attempt in range(self.MAX_RETRIES + 1):
-			try:
-				logger.info(f"LLM attempt {attempt + 1}/{self.MAX_RETRIES + 1}")
-				response = await llm.ainvoke(messages, output_format=TestPlanParsedSchema)
-				plan = response.completion
+		plans: list[TestPlanParsedSchema] = []
+		for index, chunk in enumerate(chunks, start=1):
+			chunk_label = f"chunk {index}/{len(chunks)}" if len(chunks) > 1 else None
+			plans.append(await self._parse_markdown_chunk(llm, chunk, skip_validation, chunk_label))
 
-				plan = self._filter_empty_variable_sets(plan)
-
-				logger.info(f"LLM returned {len(plan.test_cases)} cases")
-
-				if not skip_validation:
-					errors = self._validate_plan(plan)
-					if errors:
-						logger.warning(f"Validation errors: {errors}")
-						if attempt < self.MAX_RETRIES:
-							messages = [
-								SystemMessage(content=TEST_PLAN_EXTRACTION_PROMPT),
-								UserMessage(content=(
-									f"上次输出存在以下错误，请修正后重新解析：\n"
-									f"{chr(10).join(errors)}\n\n"
-									f"原始文档：\n{markdown_content}"
-								)),
-							]
-							continue
-						raise ValueError(f"Validation failed after {self.MAX_RETRIES} retries: {errors}")
-
-				plan = self._reconcile_variables(plan)
-				logger.info(f"Parsed plan: {[c.case_name for c in plan.test_cases]}")
-				return plan
-
-			except Exception as e:
-				last_error = e
-				logger.warning(f"Attempt {attempt + 1} failed: {e}")
-				if attempt < self.MAX_RETRIES:
-					continue
-
-		raise ValueError(f"Failed to parse after {self.MAX_RETRIES + 1} attempts: {last_error}")
+		plan = TestPlanParsedSchema(
+			test_cases=[
+				case
+				for parsed_plan in plans
+				for case in parsed_plan.test_cases
+			]
+		)
+		logger.info(f"Parsed plan: {[c.case_name for c in plan.test_cases]}")
+		return plan
 
 	async def ingest_file(
 		self,
@@ -368,6 +521,11 @@ class IngestionService:
 			raise ValueError(
 				f"Unsupported file type: {file_name}. Supported: .xlsx, .xls, .md, .markdown"
 			)
+
+		if file_name.rsplit(".", 1)[-1].lower() in {"xlsx", "xls"}:
+			parsed_excel = self._parse_excel_file(file_content)
+			if parsed_excel is not None:
+				return parsed_excel
 
 		markdown = document_flattener.flatten(file_name, file_content)
 		logger.debug(f"Document flattened, markdown length={len(markdown)}")

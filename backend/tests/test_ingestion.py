@@ -5,6 +5,7 @@ These tests are designed to run in the backend environment where pandas is avail
 """
 
 from unittest.mock import AsyncMock
+from io import BytesIO
 
 import pytest
 from app.models.ingestion import (
@@ -346,6 +347,119 @@ class TestIngestionServiceIntegration:
 		result = await service.parse_markdown("Simple test content", skip_validation=True)
 
 		assert result.test_cases[0].global_variables == []
+
+	@pytest.mark.asyncio
+	async def test_parse_markdown_splits_long_documents(self, mock_llm):
+		"""Test long markdown is parsed in chunks and merged."""
+		from app.services.ingestion_service import IngestionService
+
+		from browser_use.llm.views import ChatInvokeCompletion
+
+		first_case = TestCaseParsedSchema(
+			case_name="Login",
+			start_url="https://example.com/login",
+			steps=[
+				TestStepSchema(
+					step_number=1,
+					action_description="Enter {username}",
+					expected_result="Username entered",
+					step_variables=["username"],
+				),
+			],
+			global_variables=["username"],
+			variable_sets=[{"username": "alice"}],
+		)
+		second_case = TestCaseParsedSchema(
+			case_name="Logout",
+			start_url="https://example.com/logout",
+			steps=[
+				TestStepSchema(
+					step_number=1,
+					action_description="Click logout",
+					expected_result="User is signed out",
+					step_variables=[],
+				),
+			],
+			global_variables=[],
+			variable_sets=[],
+		)
+		mock_llm.ainvoke = AsyncMock(
+			side_effect=[
+				ChatInvokeCompletion(
+					completion=TestPlanParsedSchema(test_cases=[first_case]),
+					usage=None,
+				),
+				ChatInvokeCompletion(
+					completion=TestPlanParsedSchema(test_cases=[second_case]),
+					usage=None,
+				),
+			]
+		)
+
+		service = IngestionService()
+		service._llm = mock_llm
+		service.MAX_MARKDOWN_CHARS_PER_LLM_CALL = 130
+		markdown = "\n\n".join([
+			"## Login\n" + ("Step login.\n" * 8),
+			"## Logout\n" + ("Step logout.\n" * 8),
+		])
+
+		result = await service.parse_markdown(markdown, skip_validation=True)
+
+		assert [case.case_name for case in result.test_cases] == ["Login", "Logout"]
+		assert mock_llm.ainvoke.call_count == 2
+
+	@pytest.mark.asyncio
+	async def test_ingest_excel_structured_rows_without_llm(self, mock_llm):
+		"""Test structured Excel test cases are parsed directly without LLM."""
+		import pandas as pd
+
+		from app.services.ingestion_service import IngestionService
+
+		buffer = BytesIO()
+		pd.DataFrame([
+			{
+				"用例编号": "TC-006",
+				"模块": "会话管理",
+				"测试功能点": "重命名会话",
+				"url": "http://localhost:3000/",
+				"用例名称": "正常重命名会话",
+				"用例步骤": '1. 双击会话标题进入编辑<br>2. 输入新标题"测试会话01"<br>3. 按 Enter 或点击确认',
+				"预期结果": '标题更新为"测试会话01"，持久化到后端，刷新页面后标题不变',
+				"用例级别": "P1",
+			},
+			{
+				"用例编号": "TC-008",
+				"模块": "会话管理",
+				"测试功能点": "重命名会话",
+				"url": "http://localhost:3000/",
+				"用例名称": "标题超过20字符时不允许保存",
+				"用例步骤": "1. 双击会话标题进入编辑<br>2. 输入超过20个字符的标题<br>3. 按 Enter 确认",
+				"预期结果": "弹出错误提示，标题不被保存",
+				"用例级别": "P2",
+			},
+		]).to_excel(buffer, index=False)
+
+		service = IngestionService()
+		service._llm = mock_llm
+		mock_llm.ainvoke.side_effect = AssertionError("Excel ingestion should not call LLM")
+
+		result = await service.ingest_file("cases.xlsx", buffer.getvalue())
+
+		assert [case.case_name for case in result.test_cases] == [
+			"正常重命名会话",
+			"标题超过20字符时不允许保存",
+		]
+		assert result.test_cases[0].module == "会话管理"
+		assert result.test_cases[0].function_point == "重命名会话"
+		assert result.test_cases[0].start_url == "http://localhost:3000/"
+		assert [step.action_description for step in result.test_cases[0].steps] == [
+			"双击会话标题进入编辑",
+			'输入新标题"测试会话01"',
+			"按 Enter 或点击确认",
+		]
+		assert result.test_cases[0].steps[-1].expected_result == '标题更新为"测试会话01"，持久化到后端，刷新页面后标题不变'
+		assert mock_llm.ainvoke.call_count == 0
 
 	@pytest.mark.asyncio
 	async def test_ingest_file_unsupported_type(self):
